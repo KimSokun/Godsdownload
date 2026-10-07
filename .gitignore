@@ -1,0 +1,23 @@
+# Environment and sensitive credentials
+.env
+.env.*
+!.env.example
+cookies.txt
+
+# Live user database and reports
+member.json
+member.jsonl
+member.png
+member.txt
+reports.json
+data/
+temp_downloads/
+godsdownload.lock
+*.lock
+
+# Python virtual environment and cache
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.log
