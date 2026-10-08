@@ -1,0 +1,131 @@
+# Server & Bot Controller Cheat Sheet (ការបញ្ជា និងគ្រប់គ្រង Server)
+
+ឯកសារនេះកត់ត្រារាល់ Command ទាំងអស់ដែលបានប្រើប្រាស់ក្នុងការគ្រប់គ្រង Server, ដោះស្រាយបញ្ហា NewsAI Alert ២ ដង, Upgrade Godsdownload YouTube Bot & Shorts, Git/GitHub, និង Supervisor។
+
+---
+
+## ១. ព័ត៌មាន Server & ការភ្ជាប់ SSH
+- **Server IP**: `43.160.225.229`
+- **Port**: `22`
+- **User**: `ubuntu`
+- **Sudo Password**: `e@YbZFA@PaM9vCB`
+- **Project Path 1**: `/www/wwwroot/Godsdownload`
+- **Project Path 2**: `/www/wwwroot/news`
+
+ភ្ជាប់ SSH តាម Terminal:
+```bash
+ssh ubuntu@43.160.225.229
+```
+
+---
+
+## ២. ការគ្រប់គ្រង Service តាម Supervisor
+Supervisor ត្រូវបានប្រើដើម្បី Run Bot ទាំងពីរ (`godsdownload` និង `newsai`) ជា Background 24/7៖
+
+```bash
+# ពិនិត្យមើលស្ថានភាព Bots ទាំងអស់ (Status Check)
+sudo supervisorctl status
+
+# Restart សេវាកម្ម Godsdownload ពេល Upgrade កូដរួច
+sudo supervisorctl restart godsdownload
+
+# បញ្ឈប់ ឬ ចាប់ផ្តើម Godsdownload
+sudo supervisorctl stop godsdownload
+sudo supervisorctl start godsdownload
+
+# Restart សេវាកម្ម NewsAI
+sudo supervisorctl restart newsai
+
+# Update ការកំណត់ Supervisor (ពេលកែប្រែ config ថ្មី)
+sudo supervisorctl reread
+sudo supervisorctl update
+```
+
+---
+
+## ៣. ការគ្រប់គ្រង Log Files (ត្រួតពិនិត្យដំណើរការ & កំហុស)
+
+```bash
+# មើល Log របស់ Godsdownload ផ្ទាល់
+sudo tail -f /var/log/godsdownload/stdout.log
+sudo tail -f /var/log/godsdownload/stderr.log
+
+# មើល Log ចំនួន 100 បន្ទាត់ចុងក្រោយ
+sudo tail -n 100 /var/log/godsdownload/stderr.log
+
+# មើល Log របស់ NewsAI
+sudo tail -f /www/wwwroot/news/bot.log
+sudo tail -f /www/server/panel/plugin/supervisor/log/newsai.out.log
+```
+
+---
+
+## ៤. ដំណោះស្រាយ NewsAI Alert ២ ដង (Systemd vs Supervisor)
+កាលពីមុន NewsAI រត់ស្ទួនគ្នា ២ ដង (មួយលើ systemd និងមួយទៀតលើ supervisor)៖
+
+```bash
+# ពិនិត្យមើល Process bot.py ទាំងអស់ដែលកំពុងរត់
+ps -ef | grep -E 'news|bot.py'
+
+# បញ្ឈប់ និងបិទ Service ចាស់លើ Systemd (កុំឱ្យរត់ស្ទួនជាមួយ Supervisor)
+sudo systemctl stop newsai
+sudo systemctl disable newsai
+
+# ពិនិត្យមើលស្ថានភាព Systemd របស់ newsai
+systemctl status newsai
+```
+
+---
+
+## ៥. ដំណោះស្រាយ YouTube Bot Block & YouTube Shorts (Godsdownload)
+
+```bash
+# តេស្ត yt-dlp ដោយផ្ទាល់ជាមួយ Deno JS Challenge Solver
+/www/wwwroot/Godsdownload/.venv/bin/yt-dlp --remote-components ejs:github -F "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
+
+# តេស្តទាញយកវីដេអូ YouTube Shorts តាមរយៈ Verified Proxy
+/www/wwwroot/Godsdownload/.venv/bin/yt-dlp --proxy "http://116.101.54.121:8080" --remote-components ejs:github -f "b/bv*+ba/b" -o "/tmp/test.%(ext)s" "https://www.youtube.com/shorts/lTxn2BuqyzU"
+
+# បិទ / Remove Cookie ចាស់ដែលផុតសុពលភាព (កុំឱ្យជាប់ 403 Forbidden)
+mv /www/wwwroot/Godsdownload/cookies.txt /www/wwwroot/Godsdownload/cookies.txt.disabled
+
+# កំណត់ Proxy ក្នុង .env សម្រាប់ YouTube
+# បន្ថែមបន្ទាត់នេះទៅក្នុង /www/wwwroot/Godsdownload/.env:
+# YOUTUBE_PROXY=http://116.101.54.121:8080
+```
+
+---
+
+## ៦. ការគ្រប់គ្រង Git & GitHub Repository
+
+```bash
+# ចូលទៅកាន់ Folder គម្រោង Godsdownload
+cd /www/wwwroot/Godsdownload
+
+# ពិនិត្យស្ថានភាព File ដែលបានកែប្រែ
+git status
+
+# មើលប្រវត្តិ Commit ចុងក្រោយ
+git log -n 5 --oneline
+
+# Add File និង Commit
+git add bot/platforms/youtube.py .gitignore
+git commit -m "Fix YouTube bot block and Shorts download with verified proxy rotation and Deno solver"
+
+# Push ទៅកាន់ GitHub (Branch main)
+git push origin main
+
+# ទាញយកកូដថ្មីពី GitHub មក Server (Pull)
+git pull origin main
+```
+
+---
+
+## ៧. គន្លឹះដោះស្រាយបញ្ហា (Troubleshooting Quick Guide)
+
+| បញ្ហា | មូលហេតុ | ដំណោះស្រាយ |
+|---|---|---|
+| YouTube ជាប់ `Sign in to confirm you're not a bot` | Datacenter IP ត្រូវបាន YouTube block | ប្រព័ន្ធប្រើ Proxy rotation ដោយស្វ័យប្រវត្តិ ឬ export cookie ថ្មីដាក់ក្នុង `cookies.txt` |
+| YouTube ជាប់ `HTTP Error 403: Forbidden` | Cookie ចាស់ផុតសុពលភាព | លុប ឬប្តូរឈ្មោះ `cookies.txt` ទៅជា `.disabled` |
+| NewsAI Alert ២ ដង | Process រត់ស្ទួនលើ systemd និង supervisor | ដំណើរការ `sudo systemctl stop newsai && sudo systemctl disable newsai` |
+| Godsdownload មិន update កូដថ្មី | មិនទាន់ restart supervisor | ដំណើរការ `sudo supervisorctl restart godsdownload` |
