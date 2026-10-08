@@ -2,6 +2,9 @@ import os
 import re
 import uuid
 import html
+import time
+import json
+import base64
 import asyncio
 import logging
 from typing import Optional, Dict, Any, List
@@ -20,8 +23,30 @@ from bot.cdn_api import download_direct_cdn_stream, expand_redirect_url, fetch_c
 
 logger = logging.getLogger(__name__)
 
-SHORTCODE_RE = re.compile(r'(?:/t/|/post/)([A-Za-z0-9_-]+)')
+SHORTCODE_RE = re.compile(r'(?:/t/|/post/|/share/)([A-Za-z0-9_-]+)')
 USERNAME_RE = re.compile(r'threads\.(?:net|com)/@([A-Za-z0-9_.-]+)')
+
+# In-memory TTL cache to eliminate duplicate network calls between fast_scan and download
+_threads_cache: Dict[str, Dict[str, Any]] = {}
+
+
+async def resolve_threads_share_url(url: str) -> str:
+    """Follows HTTP 301/302 redirects for mobile /share/ links to get canonical post URL."""
+    if "/share/" not in url:
+        return url
+    try:
+        headers = {
+            "User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 16_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.6 Mobile/15E148 Safari/604.1",
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        }
+        async with aiohttp.ClientSession() as session:
+            async with session.get(url, headers=headers, allow_redirects=False, timeout=aiohttp.ClientTimeout(total=4.0)) as resp:
+                loc = resp.headers.get("Location")
+                if loc:
+                    return loc
+    except Exception as e:
+        logger.debug(f"Threads share URL resolution error: {e}")
+    return url
 
 
 class ThreadsPlatform(BasePlatform):
@@ -34,7 +59,7 @@ class ThreadsPlatform(BasePlatform):
     def _threads_custom_opts(self) -> Dict[str, Any]:
         return {
             "http_headers": {
-                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36",
             }
         }
 
@@ -50,14 +75,23 @@ class ThreadsPlatform(BasePlatform):
 
     async def resolve_threads_media(self, url: str) -> Dict[str, Any]:
         """
-        Multi-tier resilient media extractor for Threads (photos, carousels, videos):
-        Tier 1: Threads native embed endpoint (/t/{shortcode}/embed)
-        Tier 2: Facebook External Hit Crawler metadata (/t/{shortcode})
-        Tier 3: Cobalt CDN Mirror
+        Multi-tier extraction for Threads (Photos, Carousels, and Videos).
+        Caches successful results for 180 seconds to avoid duplicate requests.
         """
-        clean_url = await expand_redirect_url(url)
+        global _threads_cache
+
+        # 1. Clean URL and expand redirects
+        clean_url = await resolve_threads_share_url(url)
+        clean_url = await expand_redirect_url(clean_url)
+
         shortcode = self.extract_shortcode(clean_url)
         username = self.extract_username(clean_url) or "Threads Creator"
+
+        cache_key = shortcode or clean_url
+        if cache_key in _threads_cache:
+            cached = _threads_cache[cache_key]
+            if time.time() - cached.get("_cached_at", 0) < 180:
+                return cached["data"]
 
         result: Dict[str, Any] = {
             "shortcode": shortcode,
@@ -67,239 +101,225 @@ class ThreadsPlatform(BasePlatform):
             "video_url": None,
             "image_urls": [],
             "thumbnail_url": None,
-            "media_type": None,  # "video" or "images"
+            "media_type": None,
         }
 
-        if not shortcode:
-            return result
-
-        # Tier 1: Threads Native Embed Endpoint
+        # Tier 1: LoveThreads API (supports both share URLs and direct posts)
+        # Works natively with photo carousels & full HD videos
         try:
-            embed_url = f"https://www.threads.net/t/{shortcode}/embed"
-            headers_embed = {
-                "User-Agent": "Mozilla/5.0",
-                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-                "Referer": "https://www.threads.net/",
+            endpoint = "https://lovethreads.net/api/ajaxSearch"
+            headers_api = {
+                "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
+                "Origin": "https://lovethreads.net",
+                "Referer": "https://lovethreads.net/en",
+                "X-Requested-With": "XMLHttpRequest",
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36",
             }
+            data_payload = {"q": clean_url, "t": "media", "lang": "en"}
             async with aiohttp.ClientSession() as session:
-                async with session.get(embed_url, headers=headers_embed, timeout=aiohttp.ClientTimeout(total=5.0)) as resp:
+                async with session.post(endpoint, data=data_payload, headers=headers_api, timeout=aiohttp.ClientTimeout(total=8.0)) as resp:
                     if resp.status == 200:
-                        raw_text = await resp.text()
-                        clean_text = raw_text.replace(r'\/', '/')
+                        api_json = await resp.json()
+                        if api_json.get("status") == "ok":
+                            html_data = api_json.get("data", "")
+                            tokens = re.findall(r'https://dl\.snapcdn\.app/get\?token=([A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+)', html_data)
 
-                        # 1. Author identity
-                        author_match = re.search(r'class="AuthorIdentity"[^>]*><a [^>]*><span>([^<]+)</span>', clean_text)
-                        if author_match:
-                            result["uploader"] = author_match.group(1).strip()
+                            found_video = None
+                            found_images: List[str] = []
 
-                        # 2. Post Caption / Title
-                        caption_match = re.search(r'class="BodyTextContainer"[^>]*><span>(.*?)</span>', clean_text, re.DOTALL)
-                        if caption_match:
-                            caption_text = re.sub(r'<[^>]+>', '', caption_match.group(1)).strip()
-                            caption_text = html.unescape(caption_text)
-                            if caption_text:
-                                result["title"] = caption_text[:120]
+                            for tok in tokens:
+                                full_url = f"https://dl.snapcdn.app/get?token={tok}"
+                                try:
+                                    payload_b64 = tok.split(".")[1] + "=="
+                                    payload = json.loads(base64.urlsafe_b64decode(payload_b64))
+                                    direct_u = payload.get("url", "")
+                                    if ".mp4" in direct_u or "video" in direct_u:
+                                        if not found_video:
+                                            found_video = full_url
+                                    else:
+                                        if full_url not in found_images:
+                                            found_images.append(full_url)
+                                except Exception:
+                                    pass
 
-                        # 3. Direct Video (.mp4)
-                        video_matches = re.findall(r'<source[^>]+src="([^"]+)"', clean_text)
-                        if not video_matches:
-                            video_matches = re.findall(r'https://[^"\'\s<>]+\.mp4[^"\'\s<>]*', clean_text)
-
-                        for v in video_matches:
-                            v_clean = html.unescape(v)
-                            if "static.cdninstagram.com" not in v_clean:
-                                result["video_url"] = v_clean
+                            if found_video:
+                                result["video_url"] = found_video
                                 result["media_type"] = "video"
-                                break
-
-                        # 4. Images (.jpg)
-                        raw_imgs = re.findall(
-                            r'<div class="[^"]*(?:SoloMediaContainer|SingleInnerMediaContainer|CarouselInnerMediaContainer)[^"]*"[^>]*>.*?<img[^>]+src="([^"]+)"',
-                            clean_text,
-                            re.DOTALL,
-                        )
-                        if not raw_imgs:
-                            raw_jpgs = re.findall(r'https://[^"\'\s<>]+\.jpg[^"\'\s<>]*', clean_text)
-                            raw_imgs = [
-                                j for j in raw_jpgs
-                                if not any(x in j for x in ['s100x100', 's150x150', 'static.cdninstagram', 't51.2885-19'])
-                            ]
-
-                        final_imgs: List[str] = []
-                        for img in raw_imgs:
-                            clean_img = html.unescape(img)
-                            if clean_img not in final_imgs and 't51.2885-19' not in clean_img:
-                                final_imgs.append(clean_img)
-
-                        if final_imgs:
-                            result["image_urls"] = final_imgs
-                            result["thumbnail_url"] = final_imgs[0]
-                            if not result["media_type"]:
+                                if found_images:
+                                    result["thumbnail_url"] = found_images[0]
+                            elif found_images:
+                                result["image_urls"] = found_images
+                                result["thumbnail_url"] = found_images[0]
                                 result["media_type"] = "images"
 
-                        if result["video_url"] or result["image_urls"]:
-                            logger.info(f"⚡ [Threads] Tier 1 resolved: type={result['media_type']}, images={len(result['image_urls'])}, video={'yes' if result['video_url'] else 'no'}")
-                            return result
+                            caption_m = re.search(r'class="download-box"[^>]*>.*?<p[^>]*>(.*?)</p>', html_data, re.DOTALL)
+                            if caption_m:
+                                c_text = re.sub(r'<[^>]+>', '', caption_m.group(1)).strip()
+                                if c_text:
+                                    result["title"] = html.unescape(c_text)[:120]
+
+                            if result["video_url"] or result["image_urls"]:
+                                _threads_cache[cache_key] = {"data": result, "_cached_at": time.time()}
+                                return result
         except Exception as e:
-            logger.debug(f"Threads Tier 1 embed resolution failed: {e}")
+            logger.debug(f"Threads LoveThreads API query failed: {e}")
 
-        # Tier 2: Facebook External Hit Crawler
+        # Tier 2: Facebook External Hit Crawler (for public Threads posts)
+        if shortcode:
+            try:
+                main_url = f"https://www.threads.net/t/{shortcode}"
+                headers_bot = {
+                    "User-Agent": "facebookexternalhit/1.1 (+http://www.facebook.com/externalhit_uatext.php)",
+                    "Accept": "text/html,*/*",
+                }
+                async with aiohttp.ClientSession() as session:
+                    async with session.get(main_url, headers=headers_bot, timeout=aiohttp.ClientTimeout(total=5.0)) as resp:
+                        if resp.status == 200:
+                            raw_html = await resp.text()
+                            og_v = re.findall(r'<meta property="og:video(?::secure_url)?" content="([^"]+)"', raw_html)
+                            og_i = re.findall(r'<meta property="og:image" content="([^"]+)"', raw_html)
+                            og_d = re.findall(r'<meta property="og:description" content="([^"]+)"', raw_html)
+
+                            if og_d:
+                                desc = html.unescape(og_d[0]).strip()
+                                if desc:
+                                    result["title"] = desc[:120]
+
+                            if og_v:
+                                result["video_url"] = html.unescape(og_v[0])
+                                result["media_type"] = "video"
+
+                            if og_i:
+                                imgs = [html.unescape(i) for i in og_i]
+                                result["image_urls"] = imgs
+                                result["thumbnail_url"] = imgs[0]
+                                if not result["media_type"]:
+                                    result["media_type"] = "images"
+
+                            if result["video_url"] or result["image_urls"]:
+                                _threads_cache[cache_key] = {"data": result, "_cached_at": time.time()}
+                                return result
+            except Exception as e:
+                logger.debug(f"Threads Tier 2 crawler failed: {e}")
+
+        # Tier 3: Cobalt mirror fallback
         try:
-            main_url = f"https://www.threads.net/t/{shortcode}"
-            headers_bot = {
-                "User-Agent": "facebookexternalhit/1.1 (+http://www.facebook.com/externalhit_uatext.php)",
-                "Accept": "text/html,*/*",
-            }
-            async with aiohttp.ClientSession() as session:
-                async with session.get(main_url, headers=headers_bot, timeout=aiohttp.ClientTimeout(total=5.0)) as resp:
-                    if resp.status == 200:
-                        raw_html = await resp.text()
-                        og_v = re.findall(r'<meta property="og:video(?::secure_url)?" content="([^"]+)"', raw_html)
-                        og_i = re.findall(r'<meta property="og:image" content="([^"]+)"', raw_html)
-                        og_d = re.findall(r'<meta property="og:description" content="([^"]+)"', raw_html)
-
-                        if og_d:
-                            desc = html.unescape(og_d[0]).strip()
-                            if desc:
-                                result["title"] = desc[:120]
-
-                        if og_v:
-                            result["video_url"] = html.unescape(og_v[0])
-                            result["media_type"] = "video"
-
-                        if og_i:
-                            imgs = [html.unescape(i) for i in og_i]
-                            result["image_urls"] = imgs
-                            result["thumbnail_url"] = imgs[0]
-                            if not result["media_type"]:
-                                result["media_type"] = "images"
-
-                        if result["video_url"] or result["image_urls"]:
-                            logger.info(f"⚡ [Threads] Tier 2 crawler resolved: type={result['media_type']}, images={len(result['image_urls'])}")
-                            return result
-        except Exception as e:
-            logger.debug(f"Threads Tier 2 crawler resolution failed: {e}")
-
-        # Tier 3: Cobalt CDN Mirror Fallback
-        try:
-            cdn_info = await fetch_cobalt_mirror(clean_url, is_audio=False, timeout=3.5)
+            cdn_info = await fetch_cobalt_mirror(clean_url, is_audio=False, timeout=3.0)
             if cdn_info:
                 if cdn_info.get("video_url"):
                     result["video_url"] = cdn_info["video_url"]
                     result["media_type"] = "video"
-                    result["title"] = cdn_info.get("title", result["title"])
-                    result["uploader"] = cdn_info.get("uploader", result["uploader"])
-                    result["thumbnail_url"] = cdn_info.get("thumbnail_url")
-                    return result
-                elif cdn_info.get("image_urls"):
+                if cdn_info.get("image_urls"):
                     result["image_urls"] = cdn_info["image_urls"]
-                    result["media_type"] = "images"
-                    result["title"] = cdn_info.get("title", result["title"])
-                    result["uploader"] = cdn_info.get("uploader", result["uploader"])
-                    result["thumbnail_url"] = cdn_info["image_urls"][0]
+                    if not result["media_type"]:
+                        result["media_type"] = "images"
+                if cdn_info.get("thumbnail_url"):
+                    result["thumbnail_url"] = cdn_info["thumbnail_url"]
+                if cdn_info.get("title"):
+                    result["title"] = cdn_info["title"]
+                if cdn_info.get("uploader"):
+                    result["uploader"] = cdn_info["uploader"]
+
+                if result["video_url"] or result["image_urls"]:
+                    _threads_cache[cache_key] = {"data": result, "_cached_at": time.time()}
                     return result
         except Exception as e:
-            logger.debug(f"Threads Tier 3 Cobalt mirror failed: {e}")
+            logger.debug(f"Threads Cobalt fallback failed: {e}")
 
         return result
 
     async def fast_scan(self, url: str) -> Optional[Dict[str, Any]]:
-        """
-        Fast scan Threads URL: distinguishes between photo/carousel posts and video posts.
-        """
-        resolved = await self.resolve_threads_media(url)
-        if resolved and resolved.get("media_type") == "images" and resolved.get("image_urls"):
+        """Fast scan Threads link (video vs single photo vs carousel)."""
+        info = await self.resolve_threads_media(url)
+        if info.get("media_type") == "images" or (not info.get("video_url") and info.get("image_urls")):
             return {
                 "type": "images",
                 "platform": self.display_name,
                 "platform_id": self.platform_id,
-                "image_urls": resolved["image_urls"],
-                "title": resolved.get("title", "Threads Photos"),
-                "uploader": resolved.get("uploader", "Threads Creator"),
+                "image_urls": info.get("image_urls", []),
+                "title": info.get("title", "Threads Photos"),
+                "uploader": info.get("uploader", "Threads Creator"),
+                "thumbnail_url": info.get("thumbnail_url"),
             }
-        elif resolved and resolved.get("video_url"):
+        if info.get("video_url"):
             return {
                 "type": "video",
                 "platform": self.display_name,
                 "platform_id": self.platform_id,
                 "image_urls": [],
-                "video_url": resolved["video_url"],
-                "title": resolved.get("title", "Threads Video"),
-                "uploader": resolved.get("uploader", "Threads Creator"),
-                "thumbnail_url": resolved.get("thumbnail_url"),
+                "title": info.get("title", "Threads Video"),
+                "uploader": info.get("uploader", "Threads Creator"),
+                "thumbnail_url": info.get("thumbnail_url"),
             }
         return None
 
     async def download_images(self, url: str) -> Any:
-        """
-        Downloads or extracts HD images / carousel photos from Threads.
-        """
         from bot.downloader import DownloadResult
 
-        resolved = await self.resolve_threads_media(url)
-        if resolved and resolved.get("image_urls"):
-            img_list = resolved["image_urls"]
+        scan = await self.fast_scan(url)
+        if scan and scan.get("image_urls"):
             return DownloadResult(
                 success=True,
                 is_image=True,
-                image_urls=img_list,
-                title=resolved.get("title", "Threads Photos"),
-                uploader=resolved.get("uploader", "Threads Creator"),
-                direct_url=img_list[0] if img_list else None,
+                image_urls=scan["image_urls"],
+                title=scan.get("title", "Threads Photos"),
+                uploader=scan.get("uploader", "Threads Creator"),
+                direct_url=scan["image_urls"][0] if scan["image_urls"] else None,
             )
-
-        # Fallback to base class
         return await super().download_images(url)
 
     async def download_video(self, url: str, max_size_mb: float = 2000.0) -> Any:
         from bot.downloader import DownloadResult
 
-        clean_url = await expand_redirect_url(url)
         file_id = uuid.uuid4().hex
         output_video = os.path.join(config.temp_dir, f"{file_id}.mp4")
         output_thumb = os.path.join(config.temp_dir, f"{file_id}.jpg")
 
-        # Step 1: Direct Threads Resolution (Embed / Crawler / Cobalt)
-        resolved = await self.resolve_threads_media(clean_url)
-        if resolved and resolved.get("video_url"):
-            direct_video_url = resolved["video_url"]
-            ok, total_bytes, filesize_mb, err = await download_direct_cdn_stream(
-                direct_video_url,
-                output_video,
-                max_size_mb=max_size_mb,
-                max_retries=2,
-                headers={"Referer": "https://www.threads.net/"},
-            )
-            if ok:
-                thumb_path = await download_thumbnail(resolved.get("thumbnail_url"), output_thumb)
-                return DownloadResult(
-                    success=True,
-                    filepath=output_video,
-                    filename=f"{file_id}.mp4",
-                    filesize_bytes=total_bytes,
-                    filesize_mb=filesize_mb,
-                    title=resolved.get("title", "Threads Video"),
-                    uploader=resolved.get("uploader", "Threads Creator"),
-                    duration=0,
-                    thumbnail_path=thumb_path,
-                    is_over_50mb=(total_bytes > TELEGRAM_FILE_LIMIT_BYTES),
-                    is_audio=False,
-                    direct_url=direct_video_url,
+        # Step 1: Multi-tier resolver (LoveThreads / Crawler / Cobalt)
+        try:
+            info = await self.resolve_threads_media(url)
+            if info and info.get("video_url"):
+                cdn_url = info["video_url"]
+                stream_headers = {
+                    "Referer": "https://lovethreads.net/",
+                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36",
+                }
+                ok, total_bytes, filesize_mb, err = await download_direct_cdn_stream(
+                    cdn_url, output_video, max_size_mb, max_retries=2, headers=stream_headers
                 )
-            elif err and "FILE_TOO_LARGE" in err:
-                return DownloadResult(
-                    success=True,
-                    is_over_50mb=True,
-                    direct_url=direct_video_url,
-                    title=resolved.get("title", "Threads Video"),
-                    uploader=resolved.get("uploader", "Threads Creator"),
-                    filesize_mb=filesize_mb,
-                    duration=0,
-                    thumbnail_path=resolved.get("thumbnail_url"),
-                    is_audio=False,
-                )
+                if ok:
+                    thumb_path = await download_thumbnail(info.get("thumbnail_url"), output_thumb)
+                    return DownloadResult(
+                        success=True,
+                        filepath=output_video,
+                        filename=f"{file_id}.mp4",
+                        filesize_bytes=total_bytes,
+                        filesize_mb=filesize_mb,
+                        title=info.get("title", "Threads Video"),
+                        uploader=info.get("uploader", "Threads Creator"),
+                        duration=info.get("duration", 0),
+                        thumbnail_path=thumb_path,
+                        is_over_50mb=(total_bytes > TELEGRAM_FILE_LIMIT_BYTES),
+                        is_audio=False,
+                        direct_url=cdn_url,
+                    )
+                elif err and "FILE_TOO_LARGE" in err:
+                    return DownloadResult(
+                        success=True,
+                        is_over_50mb=True,
+                        direct_url=cdn_url,
+                        title=info.get("title", "Threads Video"),
+                        uploader=info.get("uploader", "Threads Creator"),
+                        filesize_mb=filesize_mb,
+                        duration=info.get("duration", 0),
+                        thumbnail_path=info.get("thumbnail_url"),
+                        is_audio=False,
+                    )
+        except Exception as e:
+            logger.debug(f"Threads direct video resolution failed: {e}")
 
-        # Step 2: yt-dlp fallback
+        # Step 2: yt-dlp fallback (with clean expanded url)
+        clean_url = await expand_redirect_url(url)
         output_base = os.path.join(config.temp_dir, file_id)
         loop = asyncio.get_running_loop()
         return await loop.run_in_executor(
@@ -309,60 +329,51 @@ class ThreadsPlatform(BasePlatform):
     async def download_audio(self, url: str, max_size_mb: float = 2000.0) -> Any:
         from bot.downloader import DownloadResult
 
-        clean_url = await expand_redirect_url(url)
         file_id = uuid.uuid4().hex
         raw_video = os.path.join(config.temp_dir, f"{file_id}_raw.mp4")
         final_mp3 = os.path.join(config.temp_dir, f"{file_id}.mp3")
         output_thumb = os.path.join(config.temp_dir, f"{file_id}.jpg")
 
-        # Step 1: Direct Threads Resolution (Download video stream & convert to MP3)
-        resolved = await self.resolve_threads_media(clean_url)
-        if resolved and resolved.get("video_url"):
-            direct_video_url = resolved["video_url"]
-            ok, total_bytes, filesize_mb, err = await download_direct_cdn_stream(
-                direct_video_url,
-                raw_video,
-                max_size_mb=max_size_mb,
-                max_retries=2,
-                headers={"Referer": "https://www.threads.net/"},
-            )
-            if ok:
-                converted = await convert_to_mp3(raw_video, final_mp3)
-                chosen_filepath = final_mp3 if converted else raw_video
-                cleanup_files(raw_video if converted else None)
-
-                filesize = os.path.getsize(chosen_filepath)
-                filesize_mb = round(filesize / (1024 * 1024), 2)
-                thumb_path = await download_thumbnail(resolved.get("thumbnail_url"), output_thumb)
-
-                return DownloadResult(
-                    success=True,
-                    filepath=chosen_filepath,
-                    filename=f"{file_id}.mp3",
-                    filesize_bytes=filesize,
-                    filesize_mb=filesize_mb,
-                    title=resolved.get("title", "Threads Audio"),
-                    uploader=resolved.get("uploader", "Threads Creator"),
-                    duration=0,
-                    thumbnail_path=thumb_path,
-                    is_over_50mb=(filesize > TELEGRAM_FILE_LIMIT_BYTES),
-                    is_audio=True,
-                    direct_url=direct_video_url,
+        # Step 1: Direct stream download + FFmpeg MP3 conversion
+        try:
+            info = await self.resolve_threads_media(url)
+            if info and info.get("video_url"):
+                cdn_url = info["video_url"]
+                stream_headers = {
+                    "Referer": "https://lovethreads.net/",
+                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36",
+                }
+                ok, total_bytes, filesize_mb, err = await download_direct_cdn_stream(
+                    cdn_url, raw_video, max_size_mb, max_retries=2, headers=stream_headers
                 )
-            elif err and "FILE_TOO_LARGE" in err:
-                return DownloadResult(
-                    success=True,
-                    is_over_50mb=True,
-                    direct_url=direct_video_url,
-                    title=resolved.get("title", "Threads Audio"),
-                    uploader=resolved.get("uploader", "Threads Creator"),
-                    filesize_mb=filesize_mb,
-                    duration=0,
-                    thumbnail_path=resolved.get("thumbnail_url"),
-                    is_audio=True,
-                )
+                if ok:
+                    converted = await convert_to_mp3(raw_video, final_mp3)
+                    chosen_filepath = final_mp3 if converted else raw_video
+                    cleanup_files(raw_video if converted else None)
+
+                    filesize = os.path.getsize(chosen_filepath)
+                    filesize_mb = round(filesize / (1024 * 1024), 2)
+                    thumb_path = await download_thumbnail(info.get("thumbnail_url"), output_thumb)
+
+                    return DownloadResult(
+                        success=True,
+                        filepath=chosen_filepath,
+                        filename=f"{file_id}.mp3",
+                        filesize_bytes=filesize,
+                        filesize_mb=filesize_mb,
+                        title=info.get("title", "Threads Audio"),
+                        uploader=info.get("uploader", "Threads Creator"),
+                        duration=info.get("duration", 0),
+                        thumbnail_path=thumb_path,
+                        is_over_50mb=(filesize > TELEGRAM_FILE_LIMIT_BYTES),
+                        is_audio=True,
+                        direct_url=cdn_url,
+                    )
+        except Exception as e:
+            logger.debug(f"Threads direct audio extraction failed: {e}")
 
         # Step 2: yt-dlp fallback
+        clean_url = await expand_redirect_url(url)
         output_base = os.path.join(config.temp_dir, file_id)
         loop = asyncio.get_running_loop()
         return await loop.run_in_executor(
