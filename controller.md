@@ -242,3 +242,37 @@ git pull origin main
    - រួមមាន៖ YouTube Gigabit engine (80-100MB/s), Proxy pool fallback, Deno solver, Removal of web player, Server IP security, Large file direct CDN support.
 2. **News_kh v1.0.0:** https://github.com/KimSokun/News_kh/releases/tag/v1.0.0
    - រួមមាន៖ Automated news fetcher, AI Khmer formatter, Telegram broadcaster, Duplicate detection, Security credentials hygiene.
+
+### 9. Upgrade NewsAI (News_kh) with Hacker News & AI Companies (Release v1.1.0)
+**គោលបំណង:** បន្ថែមប្រភពព័ត៌មានបច្ចេកវិទ្យា និងក្រុមហ៊ុន AI ល្បីៗ (Hacker News, Techmeme, OpenAI, DeepMind, NVIDIA, Microsoft, Hugging Face, ZDNet) និង Push ឡើង GitHub Release កំណែថ្មី 1.1.0 (Private)។
+
+**ប្រភពថ្មីៗដែលបានបន្ថែម (New Sources Added):**
+- **Hacker News & Silicon Valley:** Hacker News (HNRSS), Techmeme, ZDNet
+- **AI Companies & Research:** OpenAI News & Research, Google DeepMind, Google AI Blog, NVIDIA AI, Microsoft Blog, Hugging Face, MIT Tech Review AI, SemiAnalysis, Towards AI, The Verge AI, TechCrunch AI
+- បង្កើនចំនួនប្រភពសរុបពី 30 ទៅ **47 sources** (+56%)
+- ប្រភពជំនាញ AI កើនពី 10 ទៅ **21 sources** (+110%)
+- ប្រភព Tech កើនពី 19 ទៅ **28 sources** (+47%)
+
+**បញ្ជាដែលបានប្រើប្រាស់ (Commands Used):**
+1. កែសម្រួល 
+ews_sources.py បន្ថែមប្រភព RSS និង Regex Mapping ថ្មីៗ។
+2. ធ្វើបច្ចុប្បន្នភាព .env ដើម្បីតាមដាន category i ផងដែរ:
+   `ash
+   ALERT_CATEGORIES=tech,ai,security
+   `
+3. Restart សេវា NewsAI លើ Supervisor:
+   `ash
+   sudo supervisorctl restart newsai:newsai_00
+   `
+4. Commit និង Push កូដថ្មីឡើង GitHub:
+   `ash
+   sudo git -C /www/wwwroot/news add news_sources.py
+   sudo git -C /www/wwwroot/news commit -m 'feat: expand tech & AI news sources with Hacker News, OpenAI, DeepMind, NVIDIA, Techmeme, ZDNet'
+   sudo git -C /www/wwwroot/news push origin main
+   `
+5. បង្កើត Git Tag 1.1.0 និង Push ឡើង GitHub:
+   `ash
+   sudo git -C /www/wwwroot/news tag -a v1.1.0 -m 'NewsAI Release v1.1.0: Expanded Technology & AI feeds (Hacker News, Techmeme, OpenAI, DeepMind, NVIDIA, Hugging Face, ZDNet)'
+   sudo git -C /www/wwwroot/news push origin v1.1.0
+   `
+6. បង្កើត GitHub Release (Private) ផ្លូវការ: https://github.com/KimSokun/News_kh/releases/tag/v1.1.0
