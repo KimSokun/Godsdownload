@@ -233,3 +233,12 @@ git pull origin main
    `ash
    sudo git -C /www/wwwroot/news tag -l -n
    `
+
+### 8. Publish Official Private GitHub Releases (v1.0.0)
+**គោលបំណង:** បង្កើតផ្ទាំង GitHub Release ផ្លូវការ (v1.0.0) សម្រាប់ទាំង Godsdownload និង NewsAI ក្នុងលក្ខណៈ Private (មានតែម្ចាស់គណនីប៉ុណ្ណោះដែលអាចឃើញ)។
+
+**Releases ដែលបានបង្កើត (Releases Created):**
+1. **Godsdownload v1.0.0:** https://github.com/KimSokun/Godsdownload/releases/tag/v1.0.0
+   - រួមមាន៖ YouTube Gigabit engine (80-100MB/s), Proxy pool fallback, Deno solver, Removal of web player, Server IP security, Large file direct CDN support.
+2. **News_kh v1.0.0:** https://github.com/KimSokun/News_kh/releases/tag/v1.0.0
+   - រួមមាន៖ Automated news fetcher, AI Khmer formatter, Telegram broadcaster, Duplicate detection, Security credentials hygiene.
