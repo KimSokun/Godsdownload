@@ -197,3 +197,39 @@ git pull origin main
    `ash
    git tag -l -n
    `
+
+### 7. Configure NewsAI Repository (News_kh), Ignore .bat Files & Tag v1.0.0
+**គោលបំណង:** ភ្ជាប់ Git Repository សម្រាប់ NewsAI (KimSokun/News_kh) កំណត់ .gitignore មិនឱ្យ push .bat និងឯកសារ sensitive ឡើង GitHub ព្រមទាំងបង្កើត Version Tag 1.0.0 ផ្លូវការ។
+
+**បញ្ជាដែលបានប្រើប្រាស់ (Commands Used):**
+1. ពិនិត្យទីតាំង និងដំណើរការរបស់ NewsAI:
+   `ash
+   sudo ps -p 1367 -o pid,user,cmd
+   # Working directory: /www/wwwroot/news
+   `
+2. រៀបចំ Git និងភ្ជាប់ Remote Repository:
+   `ash
+   sudo git -C /www/wwwroot/news init
+   sudo git -C /www/wwwroot/news config --global --add safe.directory /www/wwwroot/news
+   sudo git -C /www/wwwroot/news remote add origin https://github.com/KimSokun/News_kh.git
+   sudo git -C /www/wwwroot/news fetch origin
+   sudo git -C /www/wwwroot/news branch -M main
+   sudo git -C /www/wwwroot/news reset origin/main
+   `
+3. បង្កើត .gitignore ទប់ស្កាត់ .bat, .cmd, .env, data/, logs និង venv:
+   - បានបន្ថែម *.bat និង *.cmd
+4. Commit និង Push កូដផលិតកម្មចុងក្រោយរបស់ NewsAI ឡើង GitHub:
+   `ash
+   sudo git -C /www/wwwroot/news add -A
+   sudo git -C /www/wwwroot/news commit -m 'Update NewsAI production code and ignore windows batch scripts (*.bat, *.cmd)'
+   sudo git -C /www/wwwroot/news push origin main
+   `
+5. បង្កើត Git Tag 1.0.0 និង Push ឡើង GitHub:
+   `ash
+   sudo git -C /www/wwwroot/news tag -a v1.0.0 -m 'NewsAI Release v1.0.0: Automated news fetcher, AI translation/formatting, and Telegram broadcast bot'
+   sudo git -C /www/wwwroot/news push origin v1.0.0
+   `
+6. ផ្ទៀងផ្ទាត់បញ្ជី Tag លើ News_kh:
+   `ash
+   sudo git -C /www/wwwroot/news tag -l -n
+   `
