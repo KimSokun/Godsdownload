@@ -12,7 +12,7 @@ from bot.config import config
 from bot.tracker import tracker
 from bot.downloader import download_video, download_audio, download_images, scan_url, extract_first_url, cleanup_files
 from bot.platforms.router import detect_platform
-from bot.web_player import register_stream, get_player_url, get_stream_url
+from bot.web_player import register_stream, get_player_url, get_stream_url, get_download_url
 
 logger = logging.getLogger(__name__)
 
@@ -532,16 +532,17 @@ async def media_download_callback(update: Update, context: ContextTypes.DEFAULT_
             headers=getattr(result, "headers", None),
             is_audio=(media_type == "audio"),
         )
-        stream_url = await get_stream_url(stream_token)
+        download_url = await get_download_url(stream_token)
+        player_url = await get_player_url(stream_token)
 
         header = get_member_header(user.id)
         new_daily_count = tracker.increment_download(user.id)
         filesize_display = f"{result.filesize_mb:.1f} MB" if result.filesize_mb else "50+ MB"
 
-        direct_cdn_url = result.direct_url or stream_url
         direct_cdn_section = (
-            f"⚡ <b>Direct Stream (CDN):</b>\n"
-            f"🔗 <a href=\"{direct_cdn_url}\">HD Download</a> <i>(Expires in 15 minutes)</i>\n\n"
+            f"⚡ <b>High-Speed Browser CDN (Valid 15 Mins):</b>\n"
+            f"📥 <a href=\"{download_url}\"><b>Direct File Download (Fast CDN)</b></a>\n"
+            f"🎬 <a href=\"{player_url}\"><b>Watch in Web Player</b></a>\n\n"
         )
 
         large_file_msg = (
@@ -551,11 +552,12 @@ async def media_download_callback(update: Update, context: ContextTypes.DEFAULT_
             f"👤 <b>Channel:</b> {safe_uploader}\n"
             f"📦 <b>Size:</b> <b>{filesize_display}</b> (Exceeds Telegram 50 MB Limit)\n\n"
             f"{direct_cdn_section}"
-            f"⚡ <i>Telegram limits direct file delivery to 50 MB. Click below for instant high-speed HD stream / download or MP3 audio!</i>"
+            f"⚡ <i>Telegram limits direct file delivery to 50 MB. Click below to download directly in your browser with full speed CDN or stream online!</i>"
         )
         keyboard = [
-            [InlineKeyboardButton("⚡ HD Download", url=direct_cdn_url)],
-            [InlineKeyboardButton("🎵 MP3 Download", callback_data=f"dl_media:audio:{token}")],
+            [InlineKeyboardButton("📥 Download in Browser (Fast CDN)", url=download_url)],
+            [InlineKeyboardButton("🎬 Watch in Web Player", url=player_url)],
+            [InlineKeyboardButton("🎵 MP3 Audio Download", callback_data=f"dl_media:audio:{token}")],
             [InlineKeyboardButton("🚨 Report Problem", callback_data="btn_report_problem")]
         ]
 
@@ -736,22 +738,24 @@ async def media_download_callback(update: Update, context: ContextTypes.DEFAULT_
                     headers=getattr(result, "headers", None),
                     is_audio=(media_type == "audio"),
                 )
-                stream_url = await get_stream_url(stream_token)
-                direct_cdn_url = result.direct_url or stream_url
+                download_url = await get_download_url(stream_token)
+                player_url = await get_player_url(stream_token)
                 direct_cdn_section = (
-                    f"⚡ <b>Direct Stream (CDN):</b>\n"
-                    f"🔗 <a href=\"{direct_cdn_url}\">HD Download</a> <i>(Expires in 15 minutes)</i>\n\n"
+                    f"⚡ <b>High-Speed Browser CDN (Valid 15 Mins):</b>\n"
+                    f"📥 <a href=\"{download_url}\"><b>Direct File Download (Fast CDN)</b></a>\n"
+                    f"🎬 <a href=\"{player_url}\"><b>Watch in Web Player</b></a>\n\n"
                 )
                 fallback_msg = (
                     f"🎬 <b>{safe_title}</b>\n\n"
                     f"👤 <b>Channel:</b> {safe_uploader}\n"
                     f"📦 <b>Size:</b> <b>{result.filesize_mb or '50+'} MB</b> (Exceeds Telegram Direct Limit)\n\n"
                     f"{direct_cdn_section}"
-                    f"⚡ <i>Telegram limits direct file delivery to 50 MB. Click below for instant high-speed HD stream / download or MP3 audio!</i>"
+                    f"⚡ <i>Telegram limits direct file delivery to 50 MB. Click below to download directly in your browser with full speed CDN or stream online!</i>"
                 )
                 fallback_kb = [
-                    [InlineKeyboardButton("⚡ HD Download", url=direct_cdn_url)],
-                    [InlineKeyboardButton("🎵 MP3 Download", callback_data=f"dl_media:audio:{token}")],
+                    [InlineKeyboardButton("📥 Download in Browser (Fast CDN)", url=download_url)],
+                    [InlineKeyboardButton("🎬 Watch in Web Player", url=player_url)],
+                    [InlineKeyboardButton("🎵 MP3 Audio Download", callback_data=f"dl_media:audio:{token}")],
                     [InlineKeyboardButton("🚨 Report Problem", callback_data="btn_report_problem")]
                 ]
                 await status_msg.edit_text(fallback_msg, reply_markup=InlineKeyboardMarkup(fallback_kb), parse_mode="HTML")

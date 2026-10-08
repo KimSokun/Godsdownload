@@ -86,6 +86,15 @@ async def get_stream_url(token: str) -> str:
     return f"http://{host}:{port}/stream?v={token}"
 
 
+async def get_download_url(token: str) -> str:
+    """Constructs the direct attachment download URL (triggers browser file download)."""
+    host = await get_server_host()
+    port = getattr(config, "web_server_port", 8080)
+    if port in (80, 443):
+        return f"http://{host}/download?v={token}"
+    return f"http://{host}:{port}/download?v={token}"
+
+
 async def handle_watch(request: web.Request) -> web.Response:
     """Serves the modern, responsive HTML5 Video Player web page."""
     token = request.query.get("v", "").strip()
