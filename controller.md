@@ -318,3 +318,55 @@ ode_modules/, dist/, និង cache ផ្សេងៗ។
    sudo git tag -a v1.0.0 -m 'Backend Release v1.0.0: Multi-service Node.js & Python backend with Docker configuration'
    sudo git push origin v1.0.0
    `
+
+
+---
+
+## 7. កំណត់ត្រា Upgrade Godsdownload v1.1.0 (Threads Video & Image Downloader)
+
+### កាលបរិច្ឆេទ & ព័ត៌មានទូទៅ
+- **កាលបរិច្ឆេទ:** 08-10-2026
+- **គម្រោង:** Godsdownload (`/www/wwwroot/Godsdownload`)
+- **Version ថ្មី:** `v1.1.0` (Private Release)
+- **GitHub Repo:** `https://github.com/KimSokun/Godsdownload` (Private)
+- **Release Tag:** `v1.1.0`
+- **Release URL:** `https://github.com/KimSokun/Godsdownload/releases/tag/v1.1.0`
+
+### មុខងារដែលបាន Upgrade & បង្កើតថ្មី
+1. **Threads Media Downloader (`bot/platforms/threads.py`):**
+   - គាំទ្រការទាញយកទាំង **Video (MP4)** និង **HD Images / Photo Carousel (JPG)** ពី Threads (`threads.net` និង `threads.com`)។
+   - **Multi-tier Extraction Pipeline:**
+     - **Tier 1:** Native Embed Endpoint (`/t/{shortcode}/embed`) - ទាញយកដោយផ្ទាល់នូវ link .mp4 និង HD .jpg ដោយគ្មានជាប់កម្រិត API Quota។
+     - **Tier 2:** Facebook Crawler User-Agent (`facebookexternalhit/1.1`) - Extract Open Graph tags (`og:video`, `og:image`, `og:description`)។
+     - **Tier 3:** Cobalt CDN Mirror Fallback។
+     - **Tier 4:** yt-dlp Fallback។
+   - បន្ថែម `fast_scan` ស្វែងរក Photo/Carousel រហ័ស និងផ្ញើរូបថតទាំងអស់ភ្លាមៗទៅ Telegram Bot។
+   - បន្ថែម `download_images` គាំទ្រការទាញយករូបថតកម្រិតច្បាស់ HD។
+   - បន្ថែម `download_audio` សម្រាប់ extract សំឡេងចេញពីវីដេអូ Threads ទៅជា MP3។
+2. **Unit Tests (`tests/test_platforms.py`):**
+   - បន្ថែម test cases សម្រាប់ Threads URL shortcode & username extraction, fast scan, photo carousel downloads។
+   - Run test suite ទាំង 86 tests ជោគជ័យ 100% (Passed 86 tests in 9.2s)។
+3. **Supervisor Process:**
+   - Restart សេវា `godsdownload` ឡើងវិញដោយជោគជ័យ (`pid 265043, RUNNING`)។
+4. **Git & Private GitHub Release:**
+   - Commit & push code ទៅ `main` branch។
+   - បង្កើត tag `v1.1.0` និង push ទៅ GitHub។
+   - បង្កើត Private Release `v1.1.0` តាម GitHub API។
+
+### បញ្ជា (Commands) ដែលបានដំណើរការ
+```bash
+# 1. ដំណើរការ Unit Tests
+cd /www/wwwroot/Godsdownload
+PYTHONPATH=. .venv/bin/python3 -m unittest discover tests
+
+# 2. Restart Supervisor Service
+echo 'e@YbZFA@PaM9vCB' | sudo -S supervisorctl restart godsdownload
+sudo supervisorctl status
+
+# 3. Commit, Push និង Tag Release v1.1.0
+git add bot/platforms/threads.py tests/test_platforms.py
+git commit -m "feat(threads): add robust video and photo/carousel downloader with multi-tier API fallbacks"
+git push origin main
+git tag -a v1.1.0 -m "Release v1.1.0: Add robust Threads video & HD image/carousel downloader with multi-tier API fallbacks"
+git push origin v1.1.0
+```
