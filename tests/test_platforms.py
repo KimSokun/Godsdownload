@@ -8,12 +8,9 @@ from bot.platforms.youtube import YouTubePlatform
 from bot.platforms.tiktok import TikTokPlatform
 from bot.platforms.facebook import FacebookPlatform
 from bot.platforms.bilibili import BilibiliPlatform
-from bot.platforms.wetv import WeTVPlatform
 from bot.platforms.instagram import InstagramPlatform
 from bot.platforms.threads import ThreadsPlatform
 from bot.platforms.twitter import TwitterPlatform
-from bot.platforms.xiaohongshu import XiaohongshuPlatform
-from bot.platforms.kuaishou import KuaishouPlatform
 from bot.platforms.reddit import RedditPlatform
 from bot.platforms.pinterest import PinterestPlatform
 from bot.platforms.generic import GenericPlatform
@@ -81,18 +78,6 @@ class TestPlatformDetection(unittest.TestCase):
                 self.assertEqual(platform.platform_id, "bilibili")
                 self.assertIn("Bilibili", platform.display_name)
 
-    def test_wetv_tencent_detection(self):
-        urls = [
-            "https://wetv.vip/en/play/u3344abc/v0044def",
-            "https://v.qq.com/x/cover/mzc00200xyz/t0040abc.html",
-            "https://m.v.qq.com/cover/m/mzc00200xyz.html",
-        ]
-        for url in urls:
-            with self.subTest(url=url):
-                platform = detect_platform(url)
-                self.assertIsInstance(platform, WeTVPlatform)
-                self.assertEqual(platform.platform_id, "wetv")
-                self.assertIn("WeTV", platform.display_name)
 
     def test_instagram_detection(self):
         urls = [
@@ -133,30 +118,6 @@ class TestPlatformDetection(unittest.TestCase):
                 self.assertEqual(platform.platform_id, "twitter")
                 self.assertIn("Twitter", platform.display_name)
 
-    def test_xiaohongshu_detection(self):
-        urls = [
-            "https://www.xiaohongshu.com/explore/64a123456789",
-            "https://xhslink.com/a/abc12345",
-        ]
-        for url in urls:
-            with self.subTest(url=url):
-                platform = detect_platform(url)
-                self.assertIsInstance(platform, XiaohongshuPlatform)
-                self.assertEqual(platform.platform_id, "xiaohongshu")
-                self.assertIn("Xiaohongshu", platform.display_name)
-
-    def test_kuaishou_detection(self):
-        urls = [
-            "https://www.kuaishou.com/short-video/3x123456789",
-            "https://v.kuaishou.com/xyz123",
-            "https://kwai.com/short-video/123456",
-        ]
-        for url in urls:
-            with self.subTest(url=url):
-                platform = detect_platform(url)
-                self.assertIsInstance(platform, KuaishouPlatform)
-                self.assertEqual(platform.platform_id, "kuaishou")
-                self.assertIn("Kuaishou", platform.display_name)
 
     def test_reddit_detection(self):
         urls = [
@@ -201,7 +162,7 @@ class TestPlatformDetection(unittest.TestCase):
         urls = [
             ("HTTPS://WWW.YOUTUBE.COM/WATCH?V=ABC12345678", YouTubePlatform),
             ("HTTP://TIKTOK.COM/@USER/VIDEO/123", TikTokPlatform),
-            ("HTTPS://WETV.VIP/EN/PLAY/123", WeTVPlatform),
+            ("HTTPS://WWW.FACEBOOK.COM/REEL/123", FacebookPlatform),
             ("HTTPS://WWW.BILIBILI.COM/VIDEO/BV123", BilibiliPlatform),
             ("HTTPS://WWW.INSTAGRAM.COM/REEL/123", InstagramPlatform),
             ("HTTPS://X.COM/USER/STATUS/123", TwitterPlatform),
@@ -217,7 +178,7 @@ class TestPlatformArchitecture(unittest.TestCase):
 
     def test_all_platforms_implement_interface(self):
         platforms = get_all_platforms()
-        self.assertGreater(len(platforms), 10)
+        self.assertGreaterEqual(len(platforms), 9)
 
         for p in platforms:
             with self.subTest(platform=p.platform_id):
@@ -268,22 +229,6 @@ class TestEndToEndDispatch(unittest.IsolatedAsyncioTestCase):
             self.assertTrue(res.is_audio)
             mock_dl.assert_awaited_once_with(test_url, 2000.0)
 
-    async def test_wetv_dispatch(self):
-        test_url = "https://wetv.vip/en/play/test123"
-        expected_result = DownloadResult(
-            success=True,
-            filepath="temp_downloads/wetv.mp4",
-            filename="wetv.mp4",
-            filesize_mb=25.0,
-            title="WeTV Drama Episode 1",
-        )
-
-        with patch.object(WeTVPlatform, "download_video", new_callable=AsyncMock) as mock_dl:
-            mock_dl.return_value = expected_result
-            res = await download_video(test_url)
-            self.assertTrue(res.success)
-            self.assertEqual(res.title, "WeTV Drama Episode 1")
-            mock_dl.assert_awaited_once_with(test_url, 2000.0)
 
     async def test_instagram_dispatch(self):
         test_url = "https://www.instagram.com/reel/C123456789/"
@@ -395,38 +340,6 @@ class TestEndToEndDispatch(unittest.IsolatedAsyncioTestCase):
             res = await download_video(test_url)
             self.assertTrue(res.success)
             self.assertEqual(res.title, "Bilibili Animation")
-            mock_dl.assert_awaited_once_with(test_url, 2000.0)
-
-    async def test_xiaohongshu_dispatch(self):
-        test_url = "https://xhslink.com/a/abc12345"
-        expected_result = DownloadResult(
-            success=True,
-            filepath="temp_downloads/xhs.mp4",
-            filename="xhs.mp4",
-            filesize_mb=7.5,
-            title="Xiaohongshu Post",
-        )
-        with patch.object(XiaohongshuPlatform, "download_video", new_callable=AsyncMock) as mock_dl:
-            mock_dl.return_value = expected_result
-            res = await download_video(test_url)
-            self.assertTrue(res.success)
-            self.assertEqual(res.title, "Xiaohongshu Post")
-            mock_dl.assert_awaited_once_with(test_url, 2000.0)
-
-    async def test_kuaishou_dispatch(self):
-        test_url = "https://v.kuaishou.com/xyz123"
-        expected_result = DownloadResult(
-            success=True,
-            filepath="temp_downloads/kuaishou.mp4",
-            filename="kuaishou.mp4",
-            filesize_mb=9.2,
-            title="Kuaishou Video",
-        )
-        with patch.object(KuaishouPlatform, "download_video", new_callable=AsyncMock) as mock_dl:
-            mock_dl.return_value = expected_result
-            res = await download_video(test_url)
-            self.assertTrue(res.success)
-            self.assertEqual(res.title, "Kuaishou Video")
             mock_dl.assert_awaited_once_with(test_url, 2000.0)
 
     async def test_generic_dispatch(self):
@@ -798,6 +711,51 @@ class TestDirectCdnAndOver50Mb(unittest.TestCase):
             self.assertEqual(res.direct_url, fake_meta["cdn_url"])
             self.assertEqual(res.filesize_mb, 95.0)
             self.assertIsNone(res.filepath)
+
+
+class TestMediaCacheAndMaintenance(unittest.TestCase):
+    """Verifies Telegram file_id caching and monthly maintenance module."""
+
+    def test_media_cache_get_set(self):
+        import os
+        import tempfile
+        from bot.media_cache import MediaCache
+        with tempfile.NamedTemporaryFile(suffix=".json", delete=False) as tf:
+            temp_cache_file = tf.name
+
+        try:
+            cache = MediaCache(cache_file=temp_cache_file)
+            test_url = "https://www.tiktok.com/@user/video/123456789"
+            self.assertIsNone(cache.get(test_url, "video"))
+
+            cache.set(
+                url=test_url,
+                media_type="video",
+                file_id="BAACAgIAAxkBAAI...",
+                title="Viral Dance",
+                uploader="TikTok Creator",
+                duration=35,
+                filesize_mb=12.5
+            )
+
+            entry = cache.get(test_url, "video")
+            self.assertIsNotNone(entry)
+            self.assertEqual(entry["file_id"], "BAACAgIAAxkBAAI...")
+            self.assertEqual(entry["title"], "Viral Dance")
+            self.assertEqual(entry["filesize_mb"], 12.5)
+
+            # Different media type should return None
+            self.assertIsNone(cache.get(test_url, "audio"))
+        finally:
+            if os.path.exists(temp_cache_file):
+                os.remove(temp_cache_file)
+
+    def test_maintenance_audit_storage(self):
+        from bot.maintenance import audit_storage_and_cleanup
+        res = audit_storage_and_cleanup(max_age_hours=24.0)
+        self.assertIn("cleaned_files", res)
+        self.assertIn("temp_usage_mb", res)
+        self.assertIn("remaining_temp_files", res)
 
 
 if __name__ == "__main__":

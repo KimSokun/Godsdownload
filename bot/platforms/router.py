@@ -6,30 +6,24 @@ from bot.platforms.youtube import YouTubePlatform
 from bot.platforms.tiktok import TikTokPlatform
 from bot.platforms.facebook import FacebookPlatform
 from bot.platforms.bilibili import BilibiliPlatform
-from bot.platforms.wetv import WeTVPlatform
 from bot.platforms.instagram import InstagramPlatform
 from bot.platforms.threads import ThreadsPlatform
 from bot.platforms.twitter import TwitterPlatform
-from bot.platforms.xiaohongshu import XiaohongshuPlatform
-from bot.platforms.kuaishou import KuaishouPlatform
 from bot.platforms.reddit import RedditPlatform
 from bot.platforms.pinterest import PinterestPlatform
 from bot.platforms.generic import GenericPlatform
 
 logger = logging.getLogger(__name__)
 
-# Registered platform handlers in precedence order
+# Registered platform handlers in precedence order (Only working platforms that can download video & images)
 _PLATFORMS: List[BasePlatform] = [
     YouTubePlatform(),
     TikTokPlatform(),
     FacebookPlatform(),
     BilibiliPlatform(),
-    WeTVPlatform(),
     InstagramPlatform(),
     ThreadsPlatform(),
     TwitterPlatform(),
-    XiaohongshuPlatform(),
-    KuaishouPlatform(),
     RedditPlatform(),
     PinterestPlatform(),
 ]

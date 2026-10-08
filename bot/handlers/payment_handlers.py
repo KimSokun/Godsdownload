@@ -44,24 +44,31 @@ async def upgrade_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"{header}\n"
         f"━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         f"💎 **Godsdownload VIP Subscription (Monthly)**\n\n"
-        f"💵 **Price:** **${config.vip_price_usd:.2f} USDT / Month** (30 Days Unlimited Access)\n"
-        f"🌐 **Network:** **TRON (TRC-20)**\n\n"
-        f"💳 **USDT TRON Wallet Address (Click to Copy):**\n"
-        f"`{config.usdt_tron_address}`\n\n"
+        f"⚠️ **IMPORTANT: TO BUY VIP, YOU NEED TO CONTACT THE OWNER!**\n"
+        f"Send your **User ID** and **Username** directly to the Owner so your VIP can be activated.\n\n"
         f"👤 **Your Account Info:**\n"
-        f"🆔 **Your User ID:** `{user.id}` (Click to copy)\n"
+        f"🆔 **Your User ID:** `{user.id}` *(Tap to copy)*\n"
         f"👤 **Your Username:** {user_label}\n\n"
-        f"📌 **How to Activate (30 Days VIP):**\n"
-        f"1. Send **${config.vip_price_usd:.2f} USDT** via TRC-20 to the address above.\n"
-        f"2. Click **'✅ I Have Paid (Alert Owner)'** below.\n"
-        f"3. Send your **User ID (`{user.id}`)** and **Username** to the owner so the owner can verify and allow 30 Days VIP!"
+        f"👉 **Owner Contact:** [@{config.primary_admin_username}]({config.admin_contact_url})\n\n"
+        f"💳 **PAYMENT METHOD:** **USDT TRON (TRC-20) ONLY**\n"
+        f"💵 **Price:** **${config.vip_price_usd:.2f} USDT / Month** (30 Days Unlimited Downloads)\n"
+        f"🌐 **Network:** **TRON (TRC-20)**\n\n"
+        f"💳 **USDT TRON Wallet Address (Tap to Copy):**\n"
+        f"`{config.usdt_tron_address}`\n\n"
+        f"⚠️ **NETWORK WARNING:** Send **ONLY USDT on TRON (TRC-20)** network.\n"
+        f"Do NOT send other tokens or use other networks (ERC-20, BEP-20, etc.)!\n\n"
+        f"📌 **3 Easy Steps to Buy VIP:**\n"
+        f"1️⃣ Tap your User ID above (`{user.id}`) to copy it.\n"
+        f"2️⃣ Click **'💬 Contact Owner to Buy'** below to message @{config.primary_admin_username}.\n"
+        f"3️⃣ Send your User ID (`{user.id}`) & Username ({user_label}) to the Owner, and transfer ${config.vip_price_usd:.2f} USDT on TRON (TRC-20)!\n\n"
+        f"⚡ _Once confirmed by the owner, your 30-Day Unlimited VIP access is activated immediately!_"
     )
 
     keyboard = [
-        [InlineKeyboardButton("📝 Submit USDT TxID", callback_data="btn_submit_proof:USDT")],
-        [InlineKeyboardButton("✅ I Have Paid (Alert Owner)", callback_data="btn_paid_done")],
+        [InlineKeyboardButton(f"💬 Contact Owner to Buy (@{config.primary_admin_username})", url=config.admin_contact_url)],
+        [InlineKeyboardButton("✅ I Sent My ID & Username to Owner", callback_data="btn_paid_done")],
         [
-            InlineKeyboardButton("💬 Contact Owner / Support", url=config.admin_contact_url),
+            InlineKeyboardButton("📝 Submit USDT TxID (Optional)", callback_data="btn_submit_proof:USDT"),
             InlineKeyboardButton("📊 My Account Status", callback_data="show_status")
         ],
         [InlineKeyboardButton("🚨 Report Problem", callback_data="btn_report_problem")]

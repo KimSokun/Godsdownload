@@ -76,30 +76,29 @@ async def setup_bot_profile(bot):
     description_text = (
         "⚡ Godsdownload - Fast Video & Audio Downloader ⚡\n\n"
         "Supported Platforms (No Watermark & Full HD):\n"
-        "• 🎵 TikTok & Douyin (抖音) (No Watermark)\n"
-        "• 📺 YouTube & Shorts (HD/1080p)\n"
-        "• 🎬 WeTV & Tencent Video (腾讯视频)\n"
-        "• 📸 Instagram (Reels, Posts, Stories)\n"
+        "• 🎵 TikTok & Douyin (抖音) (No Watermark Video & Photos)\n"
+        "• 📺 YouTube & Shorts (HD/1080p Video & MP3)\n"
+        "• 📸 Instagram & Reels (Videos, Photos & Carousels)\n"
         "• 📘 Facebook & FB Watch\n"
-        "• 📺 Bilibili (哔哩哔哩)\n"
-        "• 🧵 Threads & 🐦 X (Twitter)\n"
-        "• 📕 Xiaohongshu (小红书 - RED)\n"
-        "• 👻 Kuaishou (快手) & Kwai\n"
-        "• 🤖 Reddit & 📌 Pinterest\n"
-        "• 🌐 1000+ Websites & MP4 Video / MP3 Audio\n\n"
+        "• 📺 Bilibili (哔哩哔哩 HD)\n"
+        "• 🧵 Threads & 🐦 X (Twitter) (Videos & Photos)\n"
+        "• 🤖 Reddit & 📌 Pinterest (Videos & HD Photos)\n"
+        "• 🌐 1000+ Websites & Direct MP4 / MP3 Links\n\n"
         "🆓 Free Tier: 10 downloads per day\n"
-        "💎 VIP: Unlimited downloads ($2 USD / Month)"
+        "💎 VIP: Unlimited downloads ($2 USDT / Month)\n"
+        "💳 Payment: USDT TRON (TRC-20) ONLY\n"
+        "👉 To Buy VIP: Contact Owner (@skun20000) and send your User ID & Username!"
     )
 
-    short_description = "⚡ Fast Video & MP3 Downloader for TikTok, YouTube, Instagram, Facebook, and 1000+ Sites!"
+    short_description = "⚡ Fast Video & Image Downloader (TikTok, YouTube, IG, FB & 1000+ Sites) | VIP: USDT TRON ONLY"
 
     commands = [
-        BotCommand("start", "🚀 Start or restart the bot"),
-        BotCommand("status", "📊 View your daily quota & VIP status"),
-        BotCommand("upgrade", "💎 Upgrade to VIP ($2 USD / Month)"),
-        BotCommand("report", "🚨 Report a problem or issue to owner"),
-        BotCommand("id", "🆔 View your Telegram user ID"),
-        BotCommand("help", "📖 How to use this bot"),
+        BotCommand("start", "🚀 Main Menu & Supported Platforms"),
+        BotCommand("upgrade", "💎 Buy VIP ($2 USDT TRON ONLY)"),
+        BotCommand("status", "📊 Daily Quota & VIP Subscription Status"),
+        BotCommand("help", "📖 User Guide, Platform Scope & Help"),
+        BotCommand("id", "🆔 Copy Your Telegram User ID"),
+        BotCommand("report", "🚨 Report Problem or Link Issue"),
     ]
 
     try:

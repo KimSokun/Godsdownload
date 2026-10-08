@@ -594,9 +594,24 @@ async def export_reports_doc_callback(update: Update, context: ContextTypes.DEFA
             logger.warning(f"Could not send reports document: {e}")
 
 
+@admin_only
+async def maintenance_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Runs full monthly maintenance & system audit and outputs report."""
+    status_msg = await update.message.reply_text("🔧 *Running Monthly Maintenance & Health Audit...*", parse_mode="Markdown")
+    from bot.maintenance import run_monthly_maintenance
+    try:
+        report_data, summary = await run_monthly_maintenance()
+        await status_msg.edit_text(summary, parse_mode="Markdown")
+    except Exception as e:
+        logger.error(f"Maintenance execution error: {e}", exc_info=True)
+        await status_msg.edit_text(f"❌ Error running maintenance: `{e}`", parse_mode="Markdown")
+
+
 def setup_admin_handlers(app):
     """Registers admin commands."""
     app.add_handler(CommandHandler("stats", stats_command))
+    app.add_handler(CommandHandler("maintenance", maintenance_command))
+    app.add_handler(CommandHandler("monthly_maintenance", maintenance_command))
     app.add_handler(CommandHandler("setvip", setvip_command))
     app.add_handler(CommandHandler("grant", grant_vip_command))
     app.add_handler(CommandHandler("revoke", revoke_vip_command))
