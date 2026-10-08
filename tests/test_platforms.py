@@ -750,6 +750,40 @@ class TestMediaCacheAndMaintenance(unittest.TestCase):
             if os.path.exists(temp_cache_file):
                 os.remove(temp_cache_file)
 
+
+    def test_threads_url_parsing(self):
+        platform = ThreadsPlatform()
+        self.assertEqual(platform.extract_shortcode('https://www.threads.net/@user/post/CuYrF4qpuJa'), 'CuYrF4qpuJa')
+        self.assertEqual(platform.extract_shortcode('https://www.threads.net/t/CuWqVLNPbta/'), 'CuWqVLNPbta')
+        self.assertEqual(platform.extract_username('https://www.threads.net/@creator_123/post/XYZ'), 'creator_123')
+
+    def test_threads_fast_scan_and_images(self):
+        async def _run():
+            platform = ThreadsPlatform()
+            test_url = 'https://www.threads.net/t/CuWqVLNPbta'
+            mock_resolved = {
+                'shortcode': 'CuWqVLNPbta',
+                'username': 'creator',
+                'title': 'Photo post',
+                'uploader': 'creator',
+                'video_url': None,
+                'image_urls': ['https://cdn.threads.net/photo1.jpg'],
+                'thumbnail_url': 'https://cdn.threads.net/photo1.jpg',
+                'media_type': 'images',
+            }
+            with patch.object(platform, 'resolve_threads_media', new_callable=AsyncMock) as mock_res:
+                mock_res.return_value = mock_resolved
+                scan = await platform.fast_scan(test_url)
+                self.assertIsNotNone(scan)
+                self.assertEqual(scan['type'], 'images')
+                self.assertEqual(len(scan['image_urls']), 1)
+
+                dl_res = await platform.download_images(test_url)
+                self.assertTrue(dl_res.success)
+                self.assertTrue(dl_res.is_image)
+                self.assertEqual(dl_res.image_urls, ['https://cdn.threads.net/photo1.jpg'])
+        asyncio.run(_run())
+
     def test_maintenance_audit_storage(self):
         from bot.maintenance import audit_storage_and_cleanup
         res = audit_storage_and_cleanup(max_age_hours=24.0)
