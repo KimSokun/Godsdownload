@@ -276,3 +276,45 @@ ews_sources.py បន្ថែមប្រភព RSS និង Regex Mapping ថ
    sudo git -C /www/wwwroot/news push origin v1.1.0
    `
 6. បង្កើត GitHub Release (Private) ផ្លូវការ: https://github.com/KimSokun/News_kh/releases/tag/v1.1.0
+
+### 10. Backup & Push Frontend and Backend Projects to Private GitHub (Release v1.0.0)
+**គោលបំណង:** បង្កើត Private Repositories លើ GitHub សម្រាប់គម្រោង Web App rontend និង ackend API services ដើម្បីសុវត្ថិភាពទិន្នន័យ (Backup) ដោយមិនធ្វើការ Deploy លើ Server ឡើយ។
+
+**ការរៀបចំសុវត្ថិភាព (Security & Ignore Rules):**
+- បានកំណត់ .gitignore មិនឱ្យ push ឯកសារ *.bat, *.cmd, .env, .user.ini, *.zip, 
+ode_modules/, dist/, និង cache ផ្សេងៗ។
+
+**Releases ដែលបានបង្កើត (Private Releases):**
+1. **Frontend v1.0.0:** https://github.com/KimSokun/frontend/releases/tag/v1.0.0
+   - React + TypeScript + Vite + Tailwind CSS Web Application
+2. **Backend v1.0.0:** https://github.com/KimSokun/backend/releases/tag/v1.0.0
+   - Node.js & Python FastAPI microservices + Docker Compose
+
+**បញ្ជាដែលបានប្រើប្រាស់ (Commands Used):**
+1. បង្កើត GitHub Private Repositories តាមរយៈ GitHub API (KimSokun/frontend និង KimSokun/backend)
+2. រៀបចំ Git សម្រាប់ Frontend:
+   `ash
+   cd /www/wwwroot/frontend
+   sudo git init
+   sudo git config --global --add safe.directory /www/wwwroot/frontend
+   sudo git branch -M main
+   sudo git remote add origin https://github.com/KimSokun/frontend.git
+   sudo git add .
+   sudo git commit -m 'Initial commit of frontend web application (React, TypeScript, Vite, Tailwind CSS)'
+   sudo git push -u origin main
+   sudo git tag -a v1.0.0 -m 'Frontend Release v1.0.0: React + TypeScript + Vite web app'
+   sudo git push origin v1.0.0
+   `
+3. រៀបចំ Git សម្រាប់ Backend:
+   `ash
+   cd /www/wwwroot/backend
+   sudo git init
+   sudo git config --global --add safe.directory /www/wwwroot/backend
+   sudo git branch -M main
+   sudo git remote add origin https://github.com/KimSokun/backend.git
+   sudo git add .
+   sudo git commit -m 'Initial commit of backend API services and infrastructure (Node.js, Python, Docker)'
+   sudo git push -u origin main
+   sudo git tag -a v1.0.0 -m 'Backend Release v1.0.0: Multi-service Node.js & Python backend with Docker configuration'
+   sudo git push origin v1.0.0
+   `
