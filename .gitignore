@@ -2,7 +2,7 @@
 .env
 .env.*
 !.env.example
-cookies.txt
+cookies.txt*
 
 # Live user database and reports
 member.json
