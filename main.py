@@ -11,7 +11,6 @@ from telegram.ext import ApplicationBuilder, ContextTypes
 from bot.config import config
 from bot.auto_updater import start_auto_updater
 from bot.code_watcher import start_code_watcher
-from bot.web_player import start_web_player
 from bot.handlers.user_handlers import setup_user_handlers
 from bot.handlers.payment_handlers import setup_payment_handlers
 from bot.handlers.admin_handlers import setup_admin_handlers
@@ -161,8 +160,6 @@ async def main(lock=None):
     setup_payment_handlers(application)
     setup_admin_handlers(application)
 
-    # 5b. Start Built-in Safe Web Player Server (aiohttp)
-    asyncio.create_task(start_web_player(host="0.0.0.0", port=config.web_server_port))
 
     # 5c. Start Live Code Auto-Restart Watcher (watches for uploaded code changes)
     root_dir = os.path.dirname(os.path.abspath(__file__))
