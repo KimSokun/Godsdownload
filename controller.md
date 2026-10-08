@@ -370,3 +370,49 @@ git push origin main
 git tag -a v1.1.0 -m "Release v1.1.0: Add robust Threads video & HD image/carousel downloader with multi-tier API fallbacks"
 git push origin v1.1.0
 ```
+
+
+---
+
+## 8. កំណត់ត្រា Push គម្រោង WebUIai ទៅកាន់ GitHub (Private Repository)
+
+### កាលបរិច្ឆេទ & ព័ត៌មានទូទៅ
+- **កាលបរិច្ឆេទ:** 08-10-2026
+- **ទីតាំងគម្រោងនៅលើ PC:** `C:\Users\skun8\Desktop\develop\WebUIai`
+- **GitHub Repo:** `https://github.com/KimSokun/WebUIai` (Private)
+- **Release Tag:** `v1.0.0`
+- **Release URL:** `https://github.com/KimSokun/WebUIai/releases/tag/v1.0.0`
+
+### សកម្មភាព & ការកែសម្រួល
+1. **ប្តូរឈ្មោះ Folder:**
+   - បានប្តូរឈ្មោះពី `frontend_llama_clone` ទៅជា `frontend` តាមការណែនាំរបស់អ្នកប្រើប្រាស់។
+2. **កែសម្រួល Path ក្នុង Code:**
+   - បានកែប្រែ `backend/main.py` ពី `LLAMA_FRONTEND_DIR = BASE_DIR / "frontend_llama_clone"` ទៅជា `LLAMA_FRONTEND_DIR = BASE_DIR / "frontend"`។
+3. **រៀបចំ `.gitignore` ការពារ Security:**
+   - បន្ថែម `*.bat` និង `*.cmd` ចូលក្នុង `.gitignore` មិនឱ្យ Push ឡើង GitHub ជាដាច់ខាត។
+   - Exclude ឯកសារម៉ូដែលធំៗ `models/*.gguf` (4.68 GB), `*.log`, `__pycache__`, `.pytest_cache/`។
+4. **ធ្វើតេស្តមុខងារ (Automated Tests):**
+   - ដំណើរការ pytest — ឆ្លងកាត់ការតេស្តទាំង **161 tests ជោគជ័យ ១០០%**។
+5. **Git Push & Private Release:**
+   - បង្កើត Private Repository `KimSokun/WebUIai`។
+   - Push កូដទាំងអស់ទៅកាន់ `main` branch។
+   - បង្កើត Release Tag `v1.0.0` និងបង្កើត Private Release នៅលើ GitHub។
+
+### បញ្ជា (Commands) ដែលបានដំណើរការ
+```bash
+# 1. ប្តូរឈ្មោះ Folder
+Rename-Item -Path "C:\Users\skun8\Desktop\develop\WebUIai\frontend_llama_clone" -NewName "frontend"
+
+# 2. Initialize Git & Add .gitignore
+cd C:\Users\skun8\Desktop\develop\WebUIai
+git init
+git add .
+git commit -m "Initial commit: K-Jocker Owner AI WebUI Operating Environment (FastAPI, Llama Server WebUI, Tool Platform)"
+
+# 3. Add Remote & Push
+git branch -M main
+git remote add origin https://github.com/KimSokun/WebUIai.git
+git push -u origin main
+git tag -a v1.0.0 -m "WebUIai Release v1.0.0: K-Jocker Owner AI Operating Environment & WebUI"
+git push origin v1.0.0
+```
