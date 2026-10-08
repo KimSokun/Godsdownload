@@ -4,8 +4,10 @@ import time
 import uuid
 import asyncio
 import logging
+import concurrent.futures
 from typing import Optional, Dict, Any, List
 import aiohttp
+import yt_dlp
 
 from bot.config import config
 from bot.platforms.base import (
@@ -21,72 +23,24 @@ from bot.cdn_api import download_direct_cdn_stream, fetch_cobalt_mirror, expand_
 logger = logging.getLogger(__name__)
 
 INVIDIOUS_INSTANCES = [
+    "https://invidious.f5.si",
     "https://invidious.nerdvpn.de",
     "https://inv.tux.pizza",
-    "https://vid.priv.au",
 ]
 
 YOUTUBE_ID_REGEX = re.compile(
     r'(?:v=|\/|youtu\.be\/|embed\/|shorts\/|\/v\/|watch\?v=|\&v=)([a-zA-Z0-9_-]{11})'
 )
 
+# Cache file location for verified proxy
+PROXY_CACHE_FILE = "/www/wwwroot/Godsdownload/data/working_youtube_proxy.txt"
+DEFAULT_PROXIES = [
+    "http://116.101.54.121:8080",
+]
+
 _cached_working_proxy: Optional[str] = None
 _cached_proxy_time: float = 0.0
 _proxy_lock = asyncio.Lock()
-
-
-async def get_working_proxy() -> Optional[str]:
-    """
-    Finds a working proxy for YouTube.
-    1. Uses YOUTUBE_PROXY or PROXY_URL from .env if provided.
-    2. Uses cached working proxy if tested within the last 30 minutes.
-    3. Dynamically queries fresh elite proxies from ProxyScrape and tests against YouTube.
-    """
-    global _cached_working_proxy, _cached_proxy_time
-    manual_proxy = getattr(config, "youtube_proxy", "") or getattr(config, "proxy_url", "")
-    if manual_proxy:
-        return manual_proxy
-
-    now = time.time()
-    if _cached_working_proxy and (now - _cached_proxy_time < 1800):
-        return _cached_working_proxy
-
-    async with _proxy_lock:
-        if _cached_working_proxy and (time.time() - _cached_proxy_time < 1800):
-            return _cached_working_proxy
-
-        logger.info("Scanning for active working proxy to bypass YouTube bot restrictions...")
-        try:
-            url = "https://api.proxyscrape.com/v2/?request=displayproxies&protocol=http&timeout=5000&country=all&ssl=yes&anonymity=elite"
-            async with aiohttp.ClientSession() as session:
-                async with session.get(url, timeout=aiohttp.ClientTimeout(total=4)) as resp:
-                    if resp.status == 200:
-                        text = await resp.text()
-                        candidates = [p.strip() for p in text.splitlines() if p.strip()][:30]
-
-                        async def test_proxy(proxy_str):
-                            p_url = f"http://{proxy_str}"
-                            try:
-                                async with aiohttp.ClientSession() as test_session:
-                                    async with test_session.get("https://www.youtube.com/generate_204", proxy=p_url, timeout=aiohttp.ClientTimeout(total=3)) as t_resp:
-                                        if t_resp.status in (200, 204):
-                                            return p_url
-                            except Exception:
-                                pass
-                            return None
-
-                        tasks = [test_proxy(p) for p in candidates]
-                        for f in asyncio.as_completed(tasks):
-                            res = await f
-                            if res:
-                                _cached_working_proxy = res
-                                _cached_proxy_time = time.time()
-                                logger.info(f"Verified working YouTube proxy: {_cached_working_proxy}")
-                                return _cached_working_proxy
-        except Exception as e:
-            logger.warning(f"Proxy scan failed: {e}")
-
-    return _cached_working_proxy
 
 
 def extract_youtube_id(url: str) -> Optional[str]:
@@ -98,11 +52,145 @@ def extract_youtube_id(url: str) -> Optional[str]:
 
 
 def clean_youtube_url(url: str) -> str:
-    """Normalizes YouTube URL and strips playlist/radio parameters to avoid downloading entire playlists."""
+    """Normalizes YouTube URL (shorts, youtu.be) and strips playlist/radio params."""
     yt_id = extract_youtube_id(url)
     if yt_id:
         return f"https://www.youtube.com/watch?v={yt_id}"
     return url
+
+
+def _verify_proxy_candidate(p_url: str) -> Optional[str]:
+    """Synchronous test of a proxy against YouTube metadata extraction using yt-dlp."""
+    ydl_opts = {
+        "proxy": p_url,
+        "socket_timeout": 5,
+        "extract_flat": True,
+        "quiet": True,
+        "no_warnings": True,
+        "remote_components": ["ejs:github"],
+    }
+    try:
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            info = ydl.extract_info("https://www.youtube.com/watch?v=kJQP7kiw5Fk", download=False)
+            if info and info.get("title"):
+                return p_url
+    except Exception:
+        pass
+    return None
+
+
+async def get_working_proxy(force_refresh: bool = False) -> Optional[str]:
+    """
+    Finds and caches a working proxy for YouTube.
+    1. Uses manual YOUTUBE_PROXY or PROXY_URL from .env if defined.
+    2. Checks in-memory and disk cache.
+    3. Tries default known-working proxies.
+    4. Auto-scans multiple online free proxy lists and verifies using yt-dlp.
+    """
+    global _cached_working_proxy, _cached_proxy_time
+
+    manual_proxy = getattr(config, "youtube_proxy", "") or getattr(config, "proxy_url", "")
+    if manual_proxy:
+        return manual_proxy
+
+    now = time.time()
+    if not force_refresh and _cached_working_proxy and (now - _cached_proxy_time < 3600):
+        return _cached_working_proxy
+
+    # Check disk cache
+    if not force_refresh and os.path.exists(PROXY_CACHE_FILE):
+        try:
+            with open(PROXY_CACHE_FILE, "r") as f:
+                saved = f.read().strip()
+            if saved and (now - os.path.getmtime(PROXY_CACHE_FILE) < 3600):
+                _cached_working_proxy = saved
+                _cached_proxy_time = now
+                return saved
+        except Exception:
+            pass
+
+    async with _proxy_lock:
+        if not force_refresh and _cached_working_proxy and (time.time() - _cached_proxy_time < 3600):
+            return _cached_working_proxy
+
+        loop = asyncio.get_running_loop()
+
+        # Check default proxies first
+        for def_proxy in DEFAULT_PROXIES:
+            ok = await loop.run_in_executor(None, _verify_proxy_candidate, def_proxy)
+            if ok:
+                _cached_working_proxy = ok
+                _cached_proxy_time = time.time()
+                try:
+                    os.makedirs(os.path.dirname(PROXY_CACHE_FILE), exist_ok=True)
+                    with open(PROXY_CACHE_FILE, "w") as f:
+                        f.write(ok)
+                except Exception:
+                    pass
+                logger.info(f"Verified working default YouTube proxy: {ok}")
+                return ok
+
+        # Auto-scan online sources
+        logger.info("Scanning for fresh working YouTube proxy...")
+        sources = [
+            "https://raw.githubusercontent.com/TheSpeedX/SOCKS-List/master/http.txt",
+            "https://raw.githubusercontent.com/monosans/proxy-list/main/proxies/http.txt",
+            "https://api.proxyscrape.com/v2/?request=displayproxies&protocol=http&timeout=5000&country=all&ssl=yes&anonymity=elite",
+        ]
+        candidates = []
+        try:
+            async with aiohttp.ClientSession() as session:
+                for src in sources:
+                    try:
+                        async with session.get(src, timeout=aiohttp.ClientTimeout(total=4)) as resp:
+                            if resp.status == 200:
+                                text = await resp.text()
+                                for line in text.splitlines():
+                                    line = line.strip()
+                                    if line and ":" in line and not line.startswith("#"):
+                                        p = line if line.startswith("http") else f"http://{line}"
+                                        if p not in candidates:
+                                            candidates.append(p)
+                                        if len(candidates) >= 50:
+                                            break
+                    except Exception:
+                        pass
+                    if len(candidates) >= 50:
+                        break
+        except Exception as e:
+            logger.warning(f"Proxy sources fetch error: {e}")
+
+        if candidates:
+            with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
+                futures = [executor.submit(_verify_proxy_candidate, p) for p in candidates[:30]]
+                for f in concurrent.futures.as_completed(futures):
+                    res = f.result()
+                    if res:
+                        _cached_working_proxy = res
+                        _cached_proxy_time = time.time()
+                        try:
+                            os.makedirs(os.path.dirname(PROXY_CACHE_FILE), exist_ok=True)
+                            with open(PROXY_CACHE_FILE, "w") as out_f:
+                                out_f.write(res)
+                        except Exception:
+                            pass
+                        logger.info(f"Discovered working YouTube proxy: {res}")
+                        return res
+
+    return _cached_working_proxy or (DEFAULT_PROXIES[0] if DEFAULT_PROXIES else None)
+
+
+def invalidate_proxy(proxy_url: str):
+    """Invalidates failing proxy so a new one is selected on next request."""
+    global _cached_working_proxy, _cached_proxy_time
+    if _cached_working_proxy == proxy_url:
+        _cached_working_proxy = None
+        _cached_proxy_time = 0.0
+    if os.path.exists(PROXY_CACHE_FILE):
+        try:
+            os.remove(PROXY_CACHE_FILE)
+        except Exception:
+            pass
 
 
 class YouTubePlatform(BasePlatform):
@@ -117,7 +205,7 @@ class YouTubePlatform(BasePlatform):
         headers = {"User-Agent": "Mozilla/5.0"}
         try:
             async with aiohttp.ClientSession() as session:
-                async with session.get(api_url, headers=headers, timeout=aiohttp.ClientTimeout(total=2.5)) as resp:
+                async with session.get(api_url, headers=headers, timeout=aiohttp.ClientTimeout(total=3.0)) as resp:
                     if resp.status == 200:
                         data = await resp.json()
                         title = data.get("title", "YouTube Video")
@@ -159,7 +247,7 @@ class YouTubePlatform(BasePlatform):
     async def _resolve_invidious(self, yt_id: str, is_audio: bool) -> Optional[Dict[str, Any]]:
         tasks = [self._query_single_invidious(inst, yt_id, is_audio) for inst in INVIDIOUS_INSTANCES]
         try:
-            for coro in asyncio.as_completed(tasks, timeout=2.5):
+            for coro in asyncio.as_completed(tasks, timeout=3.5):
                 try:
                     res = await coro
                     if res and (res.get("video_url") or (is_audio and res.get("audio_url"))):
@@ -172,11 +260,8 @@ class YouTubePlatform(BasePlatform):
 
     def _get_youtube_ydl_opts(self, is_audio: bool, download_path_template: str, proxy: Optional[str] = None) -> Dict[str, Any]:
         opts: Dict[str, Any] = {
-            "extractor_args": {
-                "youtube": {
-                    "player_client": ["ios", "android", "web"],
-                }
-            }
+            "remote_components": ["ejs:github"],
+            "noplaylist": True,
         }
         if is_audio:
             opts["format"] = "bestaudio[ext=m4a]/bestaudio/best"
@@ -189,8 +274,11 @@ class YouTubePlatform(BasePlatform):
                 "best[height<=720]/"
                 "best"
             )
+            opts["merge_output_format"] = "mp4"
+
         if proxy:
             opts["proxy"] = proxy
+
         return opts
 
     async def download_video(self, url: str, max_size_mb: float = 2000.0) -> Any:
@@ -201,32 +289,39 @@ class YouTubePlatform(BasePlatform):
         output_base = os.path.join(config.temp_dir, file_id)
         loop = asyncio.get_running_loop()
 
-        # Step 1: yt-dlp direct attempt
-        custom_opts = self._get_youtube_ydl_opts(is_audio=False, download_path_template=output_base)
+        # Step 1: Obtain verified working proxy (essential on datacenter VPS)
+        proxy = await get_working_proxy()
+
+        custom_opts = self._get_youtube_ydl_opts(is_audio=False, download_path_template=output_base, proxy=proxy)
         res = await loop.run_in_executor(None, self.execute_ytdlp_video, clean_url, output_base, max_size_mb, custom_opts)
         if res and res.success:
             return res
 
-        # Step 1.1: If blocked by YouTube bot detection, retry with smart proxy
+        # Step 1.1: If failed with proxy, try refreshing proxy
         err_msg = str(getattr(res, "error", "")).lower()
-        if not res or not res.success or "bot" in err_msg or "sign in" in err_msg or "login" in err_msg or "403" in err_msg:
-            proxy = await get_working_proxy()
-            if proxy:
-                logger.info(f"Retrying YouTube download with verified proxy: {proxy}")
-                proxy_opts = self._get_youtube_ydl_opts(is_audio=False, download_path_template=output_base, proxy=proxy)
-                proxy_res = await loop.run_in_executor(None, self.execute_ytdlp_video, clean_url, output_base, max_size_mb, proxy_opts)
-                if proxy_res and proxy_res.success:
-                    return proxy_res
-                else:
-                    global _cached_working_proxy
-                    _cached_working_proxy = None
+        if proxy and ("connection" in err_msg or "timed out" in err_msg or "proxy" in err_msg or "bot" in err_msg):
+            logger.warning(f"Proxy {proxy} encountered issue ({err_msg}). Refreshing proxy...")
+            invalidate_proxy(proxy)
+            new_proxy = await get_working_proxy(force_refresh=True)
+            if new_proxy and new_proxy != proxy:
+                retry_opts = self._get_youtube_ydl_opts(is_audio=False, download_path_template=output_base, proxy=new_proxy)
+                retry_res = await loop.run_in_executor(None, self.execute_ytdlp_video, clean_url, output_base, max_size_mb, retry_opts)
+                if retry_res and retry_res.success:
+                    return retry_res
+
+        # Step 1.2: Fallback without proxy (if direct server connection happens to succeed)
+        if proxy:
+            direct_opts = self._get_youtube_ydl_opts(is_audio=False, download_path_template=output_base, proxy=None)
+            direct_res = await loop.run_in_executor(None, self.execute_ytdlp_video, clean_url, output_base, max_size_mb, direct_opts)
+            if direct_res and direct_res.success:
+                return direct_res
 
         output_video = os.path.join(config.temp_dir, f"{file_id}.mp4")
         output_thumb = os.path.join(config.temp_dir, f"{file_id}.jpg")
 
         # Step 2: Cobalt CDN mirror fallback
         try:
-            cobalt_info = await fetch_cobalt_mirror(clean_url, is_audio=False, timeout=3.0)
+            cobalt_info = await fetch_cobalt_mirror(clean_url, is_audio=False, timeout=3.5)
             if cobalt_info and cobalt_info.get("video_url"):
                 cdn_url = cobalt_info["video_url"]
                 ok, total_bytes, filesize_mb, err = await download_direct_cdn_stream(
@@ -313,28 +408,35 @@ class YouTubePlatform(BasePlatform):
 
         clean_url = clean_youtube_url(url)
         file_id = uuid.uuid4().hex
-
-        # Step 1: yt-dlp audio download
         output_base = os.path.join(config.temp_dir, file_id)
-        custom_opts = self._get_youtube_ydl_opts(is_audio=True, download_path_template=output_base)
         loop = asyncio.get_running_loop()
+
+        # Step 1: Obtain verified working proxy
+        proxy = await get_working_proxy()
+
+        custom_opts = self._get_youtube_ydl_opts(is_audio=True, download_path_template=output_base, proxy=proxy)
         res = await loop.run_in_executor(None, self.execute_ytdlp_audio, clean_url, output_base, max_size_mb, custom_opts)
         if res and res.success:
             return res
 
-        # Step 1.1: If blocked by bot detection, retry with smart proxy
+        # Step 1.1: If failed with proxy, try refreshing proxy
         err_msg = str(getattr(res, "error", "")).lower()
-        if not res or not res.success or "bot" in err_msg or "sign in" in err_msg or "login" in err_msg or "403" in err_msg:
-            proxy = await get_working_proxy()
-            if proxy:
-                logger.info(f"Retrying YouTube audio download with verified proxy: {proxy}")
-                proxy_opts = self._get_youtube_ydl_opts(is_audio=True, download_path_template=output_base, proxy=proxy)
-                proxy_res = await loop.run_in_executor(None, self.execute_ytdlp_audio, clean_url, output_base, max_size_mb, proxy_opts)
-                if proxy_res and proxy_res.success:
-                    return proxy_res
-                else:
-                    global _cached_working_proxy
-                    _cached_working_proxy = None
+        if proxy and ("connection" in err_msg or "timed out" in err_msg or "proxy" in err_msg or "bot" in err_msg):
+            logger.warning(f"Audio proxy {proxy} encountered issue ({err_msg}). Refreshing proxy...")
+            invalidate_proxy(proxy)
+            new_proxy = await get_working_proxy(force_refresh=True)
+            if new_proxy and new_proxy != proxy:
+                retry_opts = self._get_youtube_ydl_opts(is_audio=True, download_path_template=output_base, proxy=new_proxy)
+                retry_res = await loop.run_in_executor(None, self.execute_ytdlp_audio, clean_url, output_base, max_size_mb, retry_opts)
+                if retry_res and retry_res.success:
+                    return retry_res
+
+        # Step 1.2: Direct attempt
+        if proxy:
+            direct_opts = self._get_youtube_ydl_opts(is_audio=True, download_path_template=output_base, proxy=None)
+            direct_res = await loop.run_in_executor(None, self.execute_ytdlp_audio, clean_url, output_base, max_size_mb, direct_opts)
+            if direct_res and direct_res.success:
+                return direct_res
 
         raw_audio = os.path.join(config.temp_dir, f"{file_id}_raw.audio")
         final_mp3 = os.path.join(config.temp_dir, f"{file_id}.mp3")
@@ -342,7 +444,7 @@ class YouTubePlatform(BasePlatform):
 
         # Step 2: Cobalt CDN audio mirror fallback
         try:
-            cobalt_info = await fetch_cobalt_mirror(clean_url, is_audio=True, timeout=3.0)
+            cobalt_info = await fetch_cobalt_mirror(clean_url, is_audio=True, timeout=3.5)
             if cobalt_info and cobalt_info.get("audio_url"):
                 cdn_url = cobalt_info["audio_url"]
                 ok, total_bytes, filesize_mb, err = await download_direct_cdn_stream(
