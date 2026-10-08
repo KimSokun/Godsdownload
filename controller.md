@@ -173,3 +173,27 @@ git pull origin main
    git commit -m 'Remove web player and server IP exposure to Telegram users'
    git push origin main
    `
+
+### 6. Create Git Tag Version v1.0.0 & Ignore .bat Files
+**គោលបំណង:** បង្កើត Version ដំបូង 1.0.0 ឡើងទៅកាន់ GitHub Releases និងកំណត់ .gitignore មិនឱ្យ push ឯកសារ Windows batch script (.bat, .cmd) ជាដាច់ខាត។
+
+**បញ្ជាដែលបានប្រើប្រាស់ (Commands Used):**
+1. កំណត់ .gitignore ដើម្បីទប់ស្កាត់ឯកសារ .bat និង .cmd:
+   `ash
+   echo -e '\n# Windows batch scripts\n*.bat\n*.cmd\n' >> .gitignore
+   git add .gitignore
+   git commit -m 'chore: ignore windows batch scripts (*.bat, *.cmd)'
+   git push origin main
+   `
+2. បង្កើត Git Tag 1.0.0 ផ្លូវការ:
+   `ash
+   git tag -a v1.0.0 -m 'Godsdownload Release v1.0.0: High-speed multi-platform Telegram downloader bot with YouTube gigabit engine, smart proxy failover, and IP security'
+   `
+3. Push Tag 1.0.0 ឡើងទៅកាន់ GitHub Repository:
+   `ash
+   git push origin v1.0.0
+   `
+4. ផ្ទៀងផ្ទាត់បញ្ជី Tag លើ Git:
+   `ash
+   git tag -l -n
+   `
