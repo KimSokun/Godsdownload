@@ -21,3 +21,8 @@ __pycache__/
 .venv/
 venv/
 *.log
+
+# Windows batch scripts
+*.bat
+*.cmd
+
