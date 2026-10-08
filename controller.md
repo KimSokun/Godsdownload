@@ -137,3 +137,39 @@ git pull origin main
 | YouTube ជាប់ `HTTP Error 403: Forbidden` | Cookie ចាស់ផុតសុពលភាព | លុប ឬប្តូរឈ្មោះ `cookies.txt` ទៅជា `.disabled` |
 | NewsAI Alert ២ ដង | Process រត់ស្ទួនលើ systemd និង supervisor | ដំណើរការ `sudo systemctl stop newsai && sudo systemctl disable newsai` |
 | Godsdownload មិន update កូដថ្មី | មិនទាន់ restart supervisor | ដំណើរការ `sudo supervisorctl restart godsdownload` |
+
+### 5. Remove Web Player & Protect Server IP Exposure
+**គោលបំណង:** លុបចោល Web Player និងបិទច្រក Port 8080 ទាំងស្រុង ដើម្បីកុំឱ្យលេចចេញ IP Address របស់ Server (43.160.225.229) ទៅកាន់ Telegram users។
+
+**បញ្ជាដែលបានប្រើប្រាស់ (Commands Used):**
+1. ពិនិត្យមើលច្រក Port 8080 ថាតើមានកំពុងដំណើរការដែរឬទេ:
+   `ash
+   sudo netstat -tulnp | grep 8080
+   `
+2. ស្វែងរកកូដដែលទាក់ទងនឹង web_player ក្នុង project:
+   `ash
+   grep -rn --exclude-dir='.venv' --exclude-dir='__pycache__' 'web_player' /www/wwwroot/Godsdownload/
+   `
+3. ធ្វើការកែសម្រួលកូដ (Modifications):
+   - main.py: លុបការ import និងការ start background task start_web_player (បិទ Port 8080 មិនឱ្យបើកលើ Server)
+   - ot/handlers/user_handlers.py: លុប Web Player buttons, player_url, download_url ទាំងអស់ដែលបង្ហាញ IP Server (ជំនួសមកវិញដោយ Direct CDN link បើមាន ឬប៊ូតុងទាញយក MP3 និងសារជូនដំណឹងច្បាស់លាស់)
+4. ដំណើរការ Unit Tests លើ Server ដើម្បីធានាថាកូដទាំងអស់ដំណើរការធម្មតា:
+   `ash
+   cd /www/wwwroot/Godsdownload && .venv/bin/python3 -m unittest discover tests
+   `
+5. Restart សេវា Supervisor របស់ Godsdownload:
+   `ash
+   sudo supervisorctl restart godsdownload
+   `
+6. ផ្ទៀងផ្ទាត់ស្ថានភាពសេវា និងច្រក Port 8080 (បញ្ជាក់ថា Port 8080 ត្រូវបានបិទទាំងស្រុង):
+   `ash
+   sudo supervisorctl status
+   sudo netstat -tulnp | grep 8080
+   `
+7. Commit និង Push កូដថ្មីឡើង GitHub Repository (KimSokun/Godsdownload):
+   `ash
+   cd /www/wwwroot/Godsdownload
+   git add main.py bot/handlers/user_handlers.py
+   git commit -m 'Remove web player and server IP exposure to Telegram users'
+   git push origin main
+   `
