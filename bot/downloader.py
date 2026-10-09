@@ -13,6 +13,7 @@ import aiofiles
 from bot.config import config
 from bot.cdn_api import DirectCDN, download_direct_cdn_stream
 from bot.platforms.router import detect_platform, get_platform_name, get_all_platforms
+from bot.platforms.base import ensure_ios_compatible_video_sync
 
 logger = logging.getLogger(__name__)
 
@@ -192,14 +193,29 @@ def _build_video_opts(download_path_template: str, use_cookies: bool = True) -> 
             }
         }
 
+    format_spec = (
+        "bestvideo[ext=mp4][vcodec^=avc1][filesize<48M]+bestaudio[ext=m4a][acodec^=mp4a][filesize<8M]/"
+        "bestvideo[vcodec^=avc1][filesize<48M]+bestaudio[acodec^=mp4a][filesize<8M]/"
+        "best[ext=mp4][vcodec^=avc1][filesize<50M]/"
+        "bestvideo[ext=mp4][filesize<48M]+bestaudio[ext=m4a][filesize<8M]/"
+        "best[ext=mp4][filesize<50M]/"
+        "bestvideo[filesize<48M]+bestaudio[filesize<8M]/"
+        "best[filesize<50M]/"
+        "bestvideo[height<=1080][vcodec^=avc1]+bestaudio[acodec^=mp4a]/"
+        "bestvideo[height<=1080]+bestaudio/"
+        "best[height<=1080]/"
+        "bestvideo+bestaudio/best"
+    ) if ffmpeg_exe else "best[vcodec^=avc1][acodec^=mp4a]/best[ext=mp4]/best"
+
     opts: Dict[str, Any] = {
         "outtmpl": download_path_template,
-        "format": "bestvideo+bestaudio/bestvideo*+bestaudio/best/b" if ffmpeg_exe else "best[vcodec!=none][acodec!=none]/best[ext=mp4]/best",
+        "format": format_spec,
         "merge_output_format": "mp4",
         "noplaylist": True,
         "quiet": True,
         "no_warnings": True,
         "writethumbnail": True,
+        "updatetime": False,
         "extractor_args": extractor_args,
     }
 
@@ -217,6 +233,9 @@ def _build_video_opts(download_path_template: str, use_cookies: bool = True) -> 
                 "preferedformat": "mp4",
             }
         ]
+        opts["postprocessor_args"] = {
+            "ffmpeg": ["-movflags", "+faststart", "-metadata", "creation_time=now"]
+        }
 
     return opts
 
@@ -306,6 +325,9 @@ def _download_video_worker(url: str, output_base: str, max_size_mb: float) -> Do
                     if os.path.exists(candidate):
                         downloaded_video = candidate
                         break
+
+                if downloaded_video:
+                    downloaded_video = ensure_ios_compatible_video_sync(downloaded_video)
 
                 if not downloaded_video:
                     if use_cookies and cookie_available:

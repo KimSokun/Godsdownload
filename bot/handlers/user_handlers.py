@@ -6,12 +6,14 @@ import uuid
 import aiohttp
 import aiofiles
 from typing import Dict
+from PIL import Image
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, InputMediaPhoto
 from telegram.ext import ContextTypes, CommandHandler, MessageHandler, CallbackQueryHandler, filters
 from bot.config import config
 from bot.tracker import tracker
 from bot.downloader import download_video, download_audio, download_images, scan_url, extract_first_url, cleanup_files
 from bot.platforms.router import detect_platform
+from bot.platforms.base import ensure_ios_compatible_video
 from bot.web_player import register_stream, get_player_url, get_stream_url
 
 logger = logging.getLogger(__name__)
@@ -241,6 +243,14 @@ async def send_image_gallery(context: ContextTypes.DEFAULT_TYPE, chat_id: int, i
                             if resp.status == 200:
                                 async with aiofiles.open(temp_file, "wb") as f:
                                     await f.write(await resp.read())
+                                # Ensure image is a valid standard RGB JPEG for Apple Photos compatibility
+                                try:
+                                    with Image.open(temp_file) as img:
+                                        if img.format != "JPEG" or img.mode != "RGB":
+                                            rgb_img = img.convert("RGB")
+                                            rgb_img.save(temp_file, "JPEG", quality=95)
+                                except Exception:
+                                    pass
                                 temp_paths.append(temp_file)
                                 fp = open(temp_file, "rb")
                                 if idx == 0 and caption:
@@ -541,6 +551,13 @@ async def media_download_callback(update: Update, context: ContextTypes.DEFAULT_
     safe_title = html.escape(result.title or "Media")
     safe_uploader = html.escape(result.uploader or "Creator")
 
+    # For video downloads, guarantee Apple iOS Photos compatibility (H.264 + AAC + FastStart + creation_time=now)
+    if result.filepath and os.path.exists(result.filepath) and media_type != "audio":
+        result.filepath = await ensure_ios_compatible_video(result.filepath)
+        if os.path.exists(result.filepath):
+            result.filesize_bytes = os.path.getsize(result.filepath)
+            result.filesize_mb = round(result.filesize_bytes / (1024 * 1024), 2)
+
     # Check actual file size on disk if available
     actual_file_bytes = 0
     if result.filepath and os.path.exists(result.filepath):
@@ -694,7 +711,8 @@ async def media_download_callback(update: Update, context: ContextTypes.DEFAULT_
                         f"━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
                         f"🎬 <b>{safe_title}</b>\n"
                         f"📦 Size: {result.filesize_mb} MB\n"
-                        f"⚡ Downloaded via @{bot_username}"
+                        f"⚡ Downloaded via @{bot_username}\n"
+                        f"💡 <i>Tip for iPhone: Tap video ➡️ ••• ➡️ 'Save Video' to save to Photos</i>"
                     )
                     try:
                         await context.bot.send_video(

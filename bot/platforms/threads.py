@@ -17,6 +17,7 @@ from bot.platforms.base import (
     download_thumbnail,
     convert_to_mp3,
     cleanup_files,
+    ensure_ios_compatible_video,
     TELEGRAM_FILE_LIMIT_BYTES,
 )
 from bot.cdn_api import download_direct_cdn_stream, expand_redirect_url, fetch_cobalt_mirror
@@ -288,6 +289,10 @@ class ThreadsPlatform(BasePlatform):
                     cdn_url, output_video, max_size_mb, max_retries=2, headers=stream_headers
                 )
                 if ok:
+                    output_video = await ensure_ios_compatible_video(output_video)
+                    if os.path.exists(output_video):
+                        total_bytes = os.path.getsize(output_video)
+                        filesize_mb = round(total_bytes / (1024 * 1024), 2)
                     thumb_path = await download_thumbnail(info.get("thumbnail_url"), output_thumb)
                     return DownloadResult(
                         success=True,
