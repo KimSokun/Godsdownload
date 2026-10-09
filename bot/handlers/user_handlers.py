@@ -609,13 +609,16 @@ async def media_download_callback(update: Update, context: ContextTypes.DEFAULT_
 
         if upload_path and os.path.exists(upload_path):
             try:
+                actual_mb_display = filesize_display
+                if os.path.exists(upload_path):
+                    actual_mb_display = f"{os.path.getsize(upload_path) / (1024 * 1024):.1f} MB"
                 await status_msg.edit_text(
                     f"{header}\n"
                     f"━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
                     f"🎬 <b>{safe_title}</b>\n\n"
-                    f"📦 <b>Size:</b> {filesize_display} (Exceeds Telegram 50 MB limit)\n"
+                    f"📦 <b>Size:</b> {actual_mb_display} (Exceeds Telegram 50 MB limit)\n"
                     f"⚡ <b>Uploading to Cloud CDN (Catbox / Gofile)...</b>\n"
-                    f"<i>Generating direct high-speed download link...</i>",
+                    f"<i>Transferring media (estimated ~30-45 seconds)...</i>",
                     parse_mode="HTML"
                 )
             except Exception:

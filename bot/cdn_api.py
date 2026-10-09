@@ -328,6 +328,52 @@ async def download_direct_cdn_stream(
             cdn_url = cdn_url.replace(akam, "upos-sz-upcdnbda2.bilivideo.com")
             break
 
+    # 1. High-Speed Acceleration: aria2c (16 parallel connections)
+    import shutil
+    aria2_exe = shutil.which("aria2c")
+    if aria2_exe:
+        out_dir = os.path.dirname(os.path.abspath(output_filepath))
+        out_file = os.path.basename(output_filepath)
+        os.makedirs(out_dir, exist_ok=True)
+        cmd = [
+            aria2_exe,
+            "-x", "16",
+            "-s", "16",
+            "-j", "16",
+            "-k", "2M",
+            "--min-split-size=1M",
+            "--max-connection-per-server=16",
+            "--summary-interval=0",
+            "--allow-overwrite=true",
+            "--auto-file-renaming=false",
+            "-d", out_dir,
+            "-o", out_file,
+        ]
+        for k, v in req_headers.items():
+            cmd.extend(["--header", f"{k}: {v}"])
+        cmd.append(cdn_url)
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                *cmd,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE
+            )
+            stdout_data, stderr_data = await asyncio.wait_for(proc.communicate(), timeout=300)
+            if proc.returncode == 0 and os.path.exists(output_filepath) and os.path.getsize(output_filepath) > 0:
+                actual_bytes = os.path.getsize(output_filepath)
+                actual_mb = round(actual_bytes / (1024 * 1024), 2)
+                if actual_mb > max_size_mb:
+                    try:
+                        os.remove(output_filepath)
+                    except Exception:
+                        pass
+                    return False, 0, 0.0, f"FILE_TOO_LARGE:{actual_mb}:{max_size_mb}"
+                logger.info(f"✅ aria2c accelerated download succeeded: {actual_mb} MB")
+                return True, actual_bytes, actual_mb, None
+        except Exception as e:
+            logger.warning(f"aria2c accelerated download failed ({e}), falling back to aiohttp...")
+
+    # 2. Fallback: standard aiohttp sequential chunk streamer
     last_error = None
     for attempt in range(1, max_retries + 1):
         try:

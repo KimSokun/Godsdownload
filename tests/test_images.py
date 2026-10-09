@@ -187,7 +187,8 @@ class TestSendImageGalleryAndCleanup(unittest.TestCase):
             "audio_url": "https://cdn.tiktok.com/audio.mp3",
         }
 
-        with patch("bot.handlers.user_handlers.scan_url", new=AsyncMock(return_value=mock_scan)):
+        with patch("bot.handlers.user_handlers.tracker.can_download", return_value=(True, 0, 10, True)), \
+             patch("bot.handlers.user_handlers.scan_url", new=AsyncMock(return_value=mock_scan)):
             asyncio.run(handle_video_message(mock_update, mock_context))
 
             # Verify send_media_group was called with all 10 images
