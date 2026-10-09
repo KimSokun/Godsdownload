@@ -632,6 +632,11 @@ class BasePlatform(ABC):
                                 error=f"FILE_TOO_LARGE:{est_mb}:{max_size_mb}"
                             )
 
+                    headers_payload = dict(info.get("http_headers") or {})
+                    if "bilibili" in url.lower() or "b23.tv" in url.lower():
+                        headers_payload["Referer"] = "https://www.bilibili.com/"
+                        headers_payload["User-Agent"] = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36"
+
                     # If file is over Telegram limit (>= 50MB) and we have a direct stream URL:
                     # Return immediately to avoid server disk consumption, rate-limiting, and FFmpeg merge bottlenecks
                     if direct_url and (est_mb is not None and est_mb >= config.telegram_direct_limit_mb):
@@ -648,6 +653,7 @@ class BasePlatform(ABC):
                             is_over_50mb=True,
                             is_audio=False,
                             direct_url=direct_url,
+                            headers=headers_payload,
                         )
 
                     try:
@@ -668,6 +674,7 @@ class BasePlatform(ABC):
                                 is_over_50mb=True,
                                 is_audio=False,
                                 direct_url=direct_url,
+                                headers=headers_payload,
                             )
                         raise
 
@@ -696,6 +703,7 @@ class BasePlatform(ABC):
                                 is_over_50mb=True,
                                 is_audio=False,
                                 direct_url=direct_url,
+                                headers=headers_payload,
                             )
                         if use_cookies and cookie_available:
                             continue
@@ -737,6 +745,7 @@ class BasePlatform(ABC):
                         is_over_50mb=is_over_50mb,
                         is_audio=False,
                         direct_url=direct_url,
+                        headers=headers_payload,
                     )
             except Exception as e:
                 if direct_url:

@@ -127,7 +127,7 @@ class BilibiliPlatform(BasePlatform):
                         is_over_50mb=True,
                         is_audio=False,
                         direct_url=cdn_url,
-                        headers={"Referer": "https://www.bilibili.com/"},
+                        headers=BILIBILI_HEADERS,
                     )
 
                 # Size < 50MB: Download progressive MP4 stream directly to disk
@@ -149,7 +149,7 @@ class BilibiliPlatform(BasePlatform):
                         is_over_50mb=is_over_50,
                         is_audio=False,
                         direct_url=cdn_url,
-                        headers={"Referer": "https://www.bilibili.com/"},
+                        headers=BILIBILI_HEADERS,
                     )
 
         # 2. Fallback: yt-dlp with backoff retry and browser headers
@@ -215,7 +215,7 @@ class BilibiliPlatform(BasePlatform):
                                 is_over_50mb=(audio_size > 50 * 1024 * 1024),
                                 is_audio=True,
                                 direct_url=cdn_url,
-                                headers={"Referer": "https://www.bilibili.com/"},
+                                headers=BILIBILI_HEADERS,
                             )
 
         # 2. Fallback: yt-dlp audio

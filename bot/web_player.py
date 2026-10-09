@@ -16,8 +16,8 @@ logger = logging.getLogger(__name__)
 _ACTIVE_STREAMS: Dict[str, Dict[str, Any]] = {}
 _cached_ip = None
 
-# Direct CDN stream URLs expire in strictly 15 minutes (900 seconds)
-STREAM_EXPIRY_SECONDS = 15 * 60
+# Direct CDN stream URLs expire in 2 hours (7200 seconds)
+STREAM_EXPIRY_SECONDS = 2 * 60 * 60
 
 
 async def get_server_host() -> str:
@@ -48,7 +48,7 @@ def register_stream(
     headers: Optional[Dict[str, str]] = None,
     is_audio: bool = False,
 ) -> str:
-    """Registers a media stream and returns a secure token (strictly expires in 15 minutes)."""
+    """Registers a media stream and returns a secure token (strictly expires in 2 hours)."""
     now = time.time()
     expired = [t for t, data in _ACTIVE_STREAMS.items() if now - data.get("created_at", 0) > STREAM_EXPIRY_SECONDS]
     for t in expired:
@@ -336,7 +336,7 @@ async def _stream_media(request: web.Request, token: str, is_attachment: bool = 
     if not data or (time.time() - data.get("created_at", 0) > STREAM_EXPIRY_SECONDS):
         if token in _ACTIVE_STREAMS:
             _ACTIVE_STREAMS.pop(token, None)
-        return web.Response(text="Media stream expired or not found (Valid for 15 minutes)", status=404)
+        return web.Response(text="Media stream expired or not found (Valid for 2 hours)", status=404)
 
     title = data.get("title", "media")
     is_audio = data.get("is_audio", False)
@@ -362,10 +362,23 @@ async def _stream_media(request: web.Request, token: str, is_attachment: bool = 
     origin = f"{parsed.scheme}://{parsed.netloc}/" if parsed.netloc else "https://www.google.com/"
 
     custom_headers = data.get("headers", {})
-    referer = custom_headers.get("Referer") or origin
+    clean_direct = direct_url.lower()
 
+    # Smart Anti-Hotlinking Referer Resolution (Bilibili, TikTok, Facebook, Instagram)
+    if any(k in clean_direct for k in ["bilibili", "bilivideo", "akamaized.net"]):
+        referer = "https://www.bilibili.com/"
+    elif any(k in clean_direct for k in ["tiktok", "byteoversea"]):
+        referer = "https://www.tiktok.com/"
+    elif any(k in clean_direct for k in ["fbcdn", "facebook"]):
+        referer = "https://www.facebook.com/"
+    elif any(k in clean_direct for k in ["instagram", "cdninstagram"]):
+        referer = "https://www.instagram.com/"
+    else:
+        referer = custom_headers.get("Referer") or origin
+
+    ua = custom_headers.get("User-Agent") or "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36"
     req_headers = {
-        "User-Agent": custom_headers.get("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36"),
+        "User-Agent": ua,
         "Referer": referer,
         "Accept": "*/*",
     }
@@ -375,16 +388,18 @@ async def _stream_media(request: web.Request, token: str, is_attachment: bool = 
     session = aiohttp.ClientSession()
     try:
         resp = await session.get(direct_url, headers=req_headers, timeout=aiohttp.ClientTimeout(total=7200, sock_read=60), allow_redirects=True)
-        # If CDN rejected with 400 or 403, retry without Referer header
+        # If CDN rejected with 400 or 403, retry with clean headers or alternative referer
         if resp.status not in (200, 206):
             await resp.release()
-            clean_headers = {
+            retry_headers = {
                 "User-Agent": req_headers["User-Agent"],
                 "Accept": "*/*",
             }
+            if any(k in clean_direct for k in ["bilibili", "bilivideo"]):
+                retry_headers["Referer"] = "https://www.bilibili.com/"
             if "Range" in request.headers:
-                clean_headers["Range"] = request.headers["Range"]
-            resp = await session.get(direct_url, headers=clean_headers, timeout=aiohttp.ClientTimeout(total=7200, sock_read=60), allow_redirects=True)
+                retry_headers["Range"] = request.headers["Range"]
+            resp = await session.get(direct_url, headers=retry_headers, timeout=aiohttp.ClientTimeout(total=7200, sock_read=60), allow_redirects=True)
 
         stream_resp = web.StreamResponse(status=resp.status)
         content_type = "audio/mpeg" if is_audio else "video/mp4"
@@ -423,7 +438,7 @@ async def handle_download(request: web.Request) -> web.StreamResponse:
 
 
 async def _periodic_cleanup_task():
-    """Background task to clean up expired stream tokens (15 minutes) and temporary download files."""
+    """Background task to clean up expired stream tokens (2 hours) and temporary download files."""
     while True:
         await asyncio.sleep(300)  # Runs every 5 minutes
         try:
@@ -443,7 +458,7 @@ async def _periodic_cleanup_task():
                     fpath = os.path.join(temp_dir, fname)
                     if os.path.isfile(fpath):
                         try:
-                            if now - os.path.getmtime(fpath) > STREAM_EXPIRY_SECONDS:  # 15 minutes
+                            if now - os.path.getmtime(fpath) > STREAM_EXPIRY_SECONDS:  # 2 hours
                                 os.remove(fpath)
                                 logger.debug(f"Removed old temp file: {fname}")
                         except Exception:
