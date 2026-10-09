@@ -18,7 +18,10 @@ def admin_only(func):
     async def wrapper(update: Update, context: ContextTypes.DEFAULT_TYPE, *args, **kwargs):
         user = update.effective_user
         if not user or not config.is_admin(user.id, user.username):
-            await update.message.reply_text("⛔ **Access Denied**: Admin privileges required.")
+            if update.callback_query:
+                await update.callback_query.answer("⛔ Access Denied: Admin privileges required.", show_alert=True)
+            elif update.message:
+                await update.message.reply_text("⛔ **Access Denied**: Admin privileges required.")
             return
         return await func(update, context, *args, **kwargs)
     return wrapper
@@ -607,8 +610,90 @@ async def maintenance_command(update: Update, context: ContextTypes.DEFAULT_TYPE
         await status_msg.edit_text(f"❌ Error running maintenance: `{e}`", parse_mode="Markdown")
 
 
+@admin_only
+async def admin_menu_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    Interactive Admin Dashboard.
+    Strictly restricted to Bot Administrators and Owner.
+    Regular users cannot access this menu.
+    """
+    stats = tracker.get_stats()
+    user = update.effective_user
+    text = (
+        f"👑 **Godsdownload Admin Dashboard**\n"
+        f"━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        f"👤 **Admin:** {user.first_name} (`{user.id}`)\n"
+        f"👥 **Total Registered Users:** `{stats.get('total_users', 0):,}`\n"
+        f"💎 **Active VIP Members:** `{stats.get('total_vips', 0)}`\n"
+        f"📥 **Total Downloads Processed:** `{stats.get('total_downloads', 0):,}`\n\n"
+        f"⚡ **Quick Controls:**\n"
+        f"• `/setvip <user_id> [days]` - Grant VIP access\n"
+        f"• `/stats` - Analytics & package versions\n"
+        f"• `/reports` - Review user bug reports\n"
+        f"• `/maintenance` - Run storage & system health audit\n"
+        f"• `/upgrade_packages` - Auto-upgrade pip, yt-dlp\n"
+        f"• `/restart` - Safely restart bot process"
+    )
+    keyboard = [
+        [
+            InlineKeyboardButton("📊 System Stats", callback_data="admin_action:stats"),
+            InlineKeyboardButton("💎 VIP Members", callback_data="admin_action:members")
+        ],
+        [
+            InlineKeyboardButton("📋 User Reports", callback_data="admin_action:reports"),
+            InlineKeyboardButton("🔧 Maintenance Audit", callback_data="admin_action:maintenance")
+        ],
+        [
+            InlineKeyboardButton("📦 Upgrade Packages", callback_data="admin_action:upgrade_pkg"),
+            InlineKeyboardButton("🔄 Restart Bot", callback_data="admin_action:restart")
+        ]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    if update.callback_query:
+        await update.callback_query.answer()
+        await update.callback_query.message.reply_text(text, reply_markup=reply_markup, parse_mode="Markdown")
+    else:
+        await update.message.reply_text(text, reply_markup=reply_markup, parse_mode="Markdown")
+
+
+async def admin_action_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handles admin dashboard interactive button clicks with strict admin check."""
+    query = update.callback_query
+    user = update.effective_user
+    if not user or not config.is_admin(user.id, user.username):
+        await query.answer("⛔ Access denied: Admin privileges required.", show_alert=True)
+        return
+
+    data = query.data
+    action = data.split(":")[1] if ":" in data else data
+    if action == "stats":
+        await query.answer()
+        await stats_command(update, context)
+    elif action == "members":
+        await query.answer()
+        await members_command(update, context)
+    elif action == "reports":
+        await query.answer()
+        await reports_command(update, context)
+    elif action == "maintenance":
+        await query.answer()
+        await maintenance_command(update, context)
+    elif action == "upgrade_pkg":
+        await query.answer()
+        await upgrade_packages_command(update, context)
+    elif action == "restart":
+        await query.answer()
+        await restart_command(update, context)
+    elif action in ("menu", "panel"):
+        await admin_menu_command(update, context)
+
+
 def setup_admin_handlers(app):
     """Registers admin commands."""
+    app.add_handler(CommandHandler("admin", admin_menu_command))
+    app.add_handler(CommandHandler("panel", admin_menu_command))
+    app.add_handler(CallbackQueryHandler(admin_menu_command, pattern="^open_admin_panel$"))
+    app.add_handler(CallbackQueryHandler(admin_action_callback, pattern=r"^admin_action:"))
     app.add_handler(CommandHandler("stats", stats_command))
     app.add_handler(CommandHandler("maintenance", maintenance_command))
     app.add_handler(CommandHandler("monthly_maintenance", maintenance_command))

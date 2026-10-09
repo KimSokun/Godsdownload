@@ -82,15 +82,18 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"🚀 <b>How to use:</b> Simply send or forward any video link here!"
     )
 
+    admin_uname = config.primary_admin_username
     keyboard = []
     if not is_vip:
-        keyboard.append([InlineKeyboardButton("💎 Upgrade to VIP ($2 USD / Month)", callback_data="show_upgrade")])
+        keyboard.append([InlineKeyboardButton(f"💎 Upgrade to VIP (Contact @{admin_uname})", callback_data="show_upgrade")])
     else:
-        keyboard.append([InlineKeyboardButton("🔄 Extend VIP Subscription ($2 USD / Month)", callback_data="show_upgrade")])
+        keyboard.append([InlineKeyboardButton(f"🔄 Extend VIP (Contact @{admin_uname})", callback_data="show_upgrade")])
     keyboard.append([
         InlineKeyboardButton("📊 My Account Status", callback_data="show_status"),
         InlineKeyboardButton("🚨 Report Problem", callback_data="btn_report_problem")
     ])
+    if config.is_admin(user.id, user.username):
+        keyboard.append([InlineKeyboardButton("👑 Admin Dashboard", callback_data="open_admin_panel")])
 
     reply_markup = InlineKeyboardMarkup(keyboard)
     await update.message.reply_text(welcome_text, reply_markup=reply_markup, parse_mode="HTML")
@@ -148,15 +151,19 @@ async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"⚡ <b>Total Processed:</b> <b>{total_downloads:,} downloads</b>\n\n"
             f"Thank you for supporting Godsdownload!"
         )
+        admin_uname = config.primary_admin_username
+        admin_url = config.admin_contact_url
         keyboard = [
-            [InlineKeyboardButton("🔄 Extend VIP Subscription ($2 USD / Month)", callback_data="show_upgrade")],
+            [InlineKeyboardButton(f"🔄 Extend VIP Subscription (Contact @{admin_uname})", callback_data="show_upgrade")],
             [
-                InlineKeyboardButton("💬 Contact Admin", url=config.admin_contact_url),
+                InlineKeyboardButton(f"💬 Contact Admin (@{admin_uname})", url=admin_url),
                 InlineKeyboardButton("🚨 Report Problem", callback_data="btn_report_problem")
             ]
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
     else:
+        admin_uname = config.primary_admin_username
+        admin_url = config.admin_contact_url
         remaining = max(0, limit - count)
         text = (
             f"{header}\n"
@@ -168,12 +175,13 @@ async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"🔄 Daily Reset: <b>Every day at 00:00 UTC</b>\n\n"
             f"👥 <b>Total Members Using Bot:</b> <b>{total_users:,}</b>\n"
             f"⚡ <b>Total Processed:</b> <b>{total_downloads:,} downloads</b>\n\n"
-            f"💡 Upgrade to VIP for <b>$2.00 USD / Month (USDT-TRON)</b> to unlock unlimited downloads for 30 days!"
+            f"💡 Upgrade to VIP for <b>$2.00 USD / Month</b> to unlock unlimited downloads for 30 days!\n"
+            f"👉 Contact Admin <b>@{admin_uname}</b> to activate your VIP access."
         )
         keyboard = [
-            [InlineKeyboardButton("💎 Upgrade to VIP ($2 USD / Month)", callback_data="show_upgrade")],
+            [InlineKeyboardButton(f"💎 Upgrade to VIP (Contact @{admin_uname})", callback_data="show_upgrade")],
             [
-                InlineKeyboardButton("💬 Contact Admin", url=config.admin_contact_url),
+                InlineKeyboardButton(f"💬 Contact Admin (@{admin_uname})", url=admin_url),
                 InlineKeyboardButton("🚨 Report Problem", callback_data="btn_report_problem")
             ]
         ]
@@ -284,19 +292,23 @@ async def handle_video_message(update: Update, context: ContextTypes.DEFAULT_TYP
     # Check daily free limit (10 per day)
     can_dl, count, limit, is_vip = tracker.can_download(user.id)
     if not can_dl:
+        admin_uname = config.primary_admin_username
+        admin_url = config.admin_contact_url
         limit_text = (
             f"⚠️ <b>Daily Free Limit Reached ({count}/{limit} today)</b>\n\n"
-            f"You have used your <b>10 free downloads for today</b>!\n"
+            f"You have used all <b>10 free downloads for today</b>!\n"
             f"Your daily quota will automatically reset tomorrow at 00:00 UTC.\n\n"
             f"🚀 <b>Want Unlimited Downloads Right Now?</b>\n"
             f"Upgrade to <b>VIP Monthly Subscription</b> for only <b>$2.00 USD / Month</b>:\n"
             f"• ♾️ 30 days of unlimited downloads without daily limits\n"
             f"• ⚡ High-speed priority processing\n\n"
-            f"Pay with USDT-TRON below to unlock instantly:"
+            f"👉 <b>To upgrade, please contact our Admin directly on Telegram:</b>\n"
+            f"👑 <b>Admin:</b> @{admin_uname}\n"
+            f"🆔 <b>Your User ID:</b> <code>{user.id}</code> <i>(Tap to copy and send to Admin)</i>"
         )
         keyboard = [
-            [InlineKeyboardButton("💎 Pay with USDT-TRC20 ($2 USD / Month)", callback_data="pay_usdt")],
-            [InlineKeyboardButton("💬 Contact Support", url=config.admin_contact_url)]
+            [InlineKeyboardButton(f"💬 Contact Admin (@{admin_uname}) to Upgrade", url=admin_url)],
+            [InlineKeyboardButton("📊 My Account Status", callback_data="show_status")]
         ]
         await message.reply_text(limit_text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="HTML")
         return
@@ -305,8 +317,9 @@ async def handle_video_message(update: Update, context: ContextTypes.DEFAULT_TYP
     platform = detect_platform(url)
 
     # Fast Scan First! (Ultra-low latency image carousel probe)
+    # Note: For Threads, do NOT auto-send images, allowing user to choose Video, Audio, or Images!
     scan_info = await scan_url(url)
-    if scan_info and scan_info.get("type") == "images" and scan_info.get("image_urls"):
+    if platform.platform_id != "threads" and scan_info and scan_info.get("type") == "images" and scan_info.get("image_urls"):
         img_urls = scan_info["image_urls"]
         status_msg = await message.reply_text(
             f"⚡ <b>Detected {len(img_urls)} HD Images from {platform.display_name}!</b>\n"
@@ -347,6 +360,11 @@ async def handle_video_message(update: Update, context: ContextTypes.DEFAULT_TYP
     remaining = max(0, limit - count)
     quota_badge = "💎 <b>VIP (Unlimited)</b>" if is_vip else f"🆓 <b>Today's Quota: {remaining}/{limit} left</b>"
 
+    # Dynamic images button text
+    has_imgs = bool(scan_info and scan_info.get("image_urls"))
+    img_count = len(scan_info["image_urls"]) if has_imgs else 0
+    img_btn_text = f"🖼️ Photos ({img_count} HD)" if has_imgs else "🖼️ Photos / Gallery"
+
     # Prompt user to choose Video (MP4), Audio (MP3), or Images
     keyboard = [
         [
@@ -354,7 +372,7 @@ async def handle_video_message(update: Update, context: ContextTypes.DEFAULT_TYP
             InlineKeyboardButton("🎵 Audio (MP3)", callback_data=f"dl_media:audio:{token}")
         ],
         [
-            InlineKeyboardButton("🖼️ Check for Images", callback_data=f"dl_media:images:{token}"),
+            InlineKeyboardButton(img_btn_text, callback_data=f"dl_media:images:{token}"),
             InlineKeyboardButton("🚨 Report Problem", callback_data="btn_report_problem")
         ]
     ]
@@ -390,14 +408,19 @@ async def media_download_callback(update: Update, context: ContextTypes.DEFAULT_
     # Check daily limit again
     can_dl, count, limit, is_vip = tracker.can_download(user.id)
     if not can_dl:
+        admin_uname = config.primary_admin_username
+        admin_url = config.admin_contact_url
         limit_text = (
             f"⚠️ <b>Daily Free Limit Reached ({count}/{limit} today)</b>\n\n"
             f"You have used your <b>10 free downloads for today</b>! Resets tomorrow.\n\n"
-            f"Upgrade to <b>VIP Monthly Subscription</b> for only <b>$2.00 USD / Month</b> for 30 days of unlimited downloads without waiting!"
+            f"🚀 <b>Upgrade to VIP Monthly Subscription ($2.00 USD / Month)</b> for 30 days of unlimited downloads without waiting!\n\n"
+            f"👉 <b>To upgrade, please contact our Admin directly on Telegram:</b>\n"
+            f"👑 <b>Admin:</b> @{admin_uname}\n"
+            f"🆔 <b>Your User ID:</b> <code>{user.id}</code> <i>(Tap to copy and send to Admin)</i>"
         )
         keyboard = [
-            [InlineKeyboardButton("💎 Pay with USDT-TRC20 ($2 USD / Month)", callback_data="pay_usdt")],
-            [InlineKeyboardButton("💬 Contact Support", url=config.admin_contact_url)]
+            [InlineKeyboardButton(f"💬 Contact Admin (@{admin_uname}) to Upgrade", url=admin_url)],
+            [InlineKeyboardButton("📊 My Account Status", callback_data="show_status")]
         ]
         await query.message.reply_text(limit_text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="HTML")
         return
@@ -455,6 +478,18 @@ async def media_download_callback(update: Update, context: ContextTypes.DEFAULT_
         # Log complete technical details to server log
         logger.error(f"❌ [Server Log] Download error for user {user.id} ({user.first_name}) on {url}:\n{err_msg}")
         
+        if "NO_VIDEO" in err_msg or "NO_AUDIO" in err_msg:
+            photo_btn = InlineKeyboardMarkup([
+                [InlineKeyboardButton("🖼️ Download Photos Now", callback_data=f"dl_media:images:{token}")]
+            ])
+            await status_msg.edit_text(
+                "⚠️ <b>This Threads post contains photos only (no video).</b>\n\n"
+                "Please tap below to download the photos:",
+                reply_markup=photo_btn,
+                parse_mode="HTML"
+            )
+            return
+
         if "FILE_TOO_LARGE" in err_msg:
             parts = err_msg.split(":")
             actual_size = parts[1] if len(parts) > 1 else "Unknown"

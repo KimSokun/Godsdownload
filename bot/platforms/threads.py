@@ -315,6 +315,11 @@ class ThreadsPlatform(BasePlatform):
                         thumbnail_path=info.get("thumbnail_url"),
                         is_audio=False,
                     )
+            elif info and info.get("image_urls") and not info.get("video_url"):
+                return DownloadResult(
+                    success=False,
+                    error="NO_VIDEO: This Threads post contains photos only (no video). Please choose '🖼️ Photos' to download."
+                )
         except Exception as e:
             logger.debug(f"Threads direct video resolution failed: {e}")
 
@@ -369,6 +374,11 @@ class ThreadsPlatform(BasePlatform):
                         is_audio=True,
                         direct_url=cdn_url,
                     )
+            elif info and info.get("image_urls") and not info.get("video_url"):
+                return DownloadResult(
+                    success=False,
+                    error="NO_AUDIO: This Threads post contains photos only. Audio is only available for videos."
+                )
         except Exception as e:
             logger.debug(f"Threads direct audio extraction failed: {e}")
 

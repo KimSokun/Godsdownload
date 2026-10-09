@@ -91,9 +91,9 @@ async def setup_bot_profile(bot):
 
     short_description = "⚡ Fast Video & Image Downloader (TikTok, YouTube, IG, FB & 1000+ Sites) | VIP: USDT TRON ONLY"
 
-    commands = [
+    user_commands = [
         BotCommand("start", "🚀 Main Menu & Supported Platforms"),
-        BotCommand("upgrade", "💎 Buy VIP ($2 USDT TRON ONLY)"),
+        BotCommand("upgrade", f"💎 Upgrade VIP (Contact @{config.primary_admin_username})"),
         BotCommand("status", "📊 Daily Quota & VIP Subscription Status"),
         BotCommand("help", "📖 User Guide, Platform Scope & Help"),
         BotCommand("id", "🆔 Copy Your Telegram User ID"),
@@ -101,10 +101,26 @@ async def setup_bot_profile(bot):
     ]
 
     try:
+        from telegram import BotCommandScopeDefault, BotCommandScopeChat
         await bot.set_my_description(description=description_text)
         await bot.set_my_short_description(short_description=short_description)
-        await bot.set_my_commands(commands=commands)
-        logger.info("✅ Bot description ('What can this bot do?') & menu configured.")
+        await bot.set_my_commands(commands=user_commands, scope=BotCommandScopeDefault())
+        logger.info("✅ Bot description & public user commands configured.")
+
+        # Admin commands registered exclusively for admin chat IDs
+        admin_commands = user_commands + [
+            BotCommand("admin", "👑 Admin Control Dashboard"),
+            BotCommand("stats", "📊 Bot Analytics & Usage"),
+            BotCommand("setvip", "💎 Grant or Revoke VIP"),
+            BotCommand("reports", "📋 Review Bug Reports"),
+            BotCommand("maintenance", "🔧 System Maintenance Audit"),
+            BotCommand("restart", "🔄 Restart Bot Service"),
+        ]
+        for admin_id in config.get_admin_chat_ids():
+            try:
+                await bot.set_my_commands(commands=admin_commands, scope=BotCommandScopeChat(chat_id=admin_id))
+            except Exception as admin_cmd_err:
+                logger.debug(f"Could not set admin commands for chat {admin_id}: {admin_cmd_err}")
     except Exception as e:
         logger.warning(f"Could not update bot profile: {e}")
 
