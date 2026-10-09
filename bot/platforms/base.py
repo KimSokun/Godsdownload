@@ -636,7 +636,6 @@ class BasePlatform(ABC):
                     if "bilibili" in url.lower() or "b23.tv" in url.lower():
                         headers_payload["Referer"] = "https://www.bilibili.com/"
                         headers_payload["User-Agent"] = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36"
-
                     # If file is over Telegram limit (>= 50MB) and we have a direct stream URL:
                     # Return immediately to avoid server disk consumption, rate-limiting, and FFmpeg merge bottlenecks
                     if direct_url and (est_mb is not None and est_mb >= config.telegram_direct_limit_mb):
@@ -816,7 +815,6 @@ class BasePlatform(ABC):
                                 success=False,
                                 error=f"FILE_TOO_LARGE:{est_mb}:{max_size_mb}"
                             )
-
                     if direct_url and (est_mb is not None and est_mb >= config.telegram_direct_limit_mb):
                         return DownloadResult(
                             success=True,

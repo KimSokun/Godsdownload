@@ -579,15 +579,75 @@ async def media_download_callback(update: Update, context: ContextTypes.DEFAULT_
         new_daily_count = tracker.increment_download(user.id)
         filesize_display = f"{result.filesize_mb:.1f} MB" if result.filesize_mb else "50+ MB"
 
-        direct_cdn_url = result.direct_url
-        if direct_cdn_url:
-            escaped_cdn_url = html.escape(direct_cdn_url, quote=True)
+        from bot.cloud_storage import upload_large_file
+
+        cloud_url = None
+        upload_path = None
+        temp_dl_file = None
+
+        if result.filepath and os.path.exists(result.filepath):
+            upload_path = result.filepath
+        elif result.direct_url:
+            from bot.cdn_api import download_direct_cdn_stream
+            temp_dl_file = os.path.join(config.temp_dir, f"cloud_{uuid.uuid4().hex}.mp4")
+            headers = getattr(result, "headers", None)
+            try:
+                await status_msg.edit_text(
+                    f"{header}\n"
+                    f"━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                    f"🎬 <b>{safe_title}</b>\n\n"
+                    f"📦 <b>Size:</b> {filesize_display} (Exceeds Telegram 50 MB limit)\n"
+                    f"⚡ <b>Buffering high-speed stream for Cloud CDN...</b>\n"
+                    f"<i>Please wait a few seconds...</i>",
+                    parse_mode="HTML"
+                )
+            except Exception:
+                pass
+            ok, _, _, _ = await download_direct_cdn_stream(result.direct_url, temp_dl_file, headers=headers)
+            if ok and os.path.exists(temp_dl_file):
+                upload_path = temp_dl_file
+
+        if upload_path and os.path.exists(upload_path):
+            try:
+                await status_msg.edit_text(
+                    f"{header}\n"
+                    f"━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                    f"🎬 <b>{safe_title}</b>\n\n"
+                    f"📦 <b>Size:</b> {filesize_display} (Exceeds Telegram 50 MB limit)\n"
+                    f"⚡ <b>Uploading to Cloud CDN (Catbox / Gofile)...</b>\n"
+                    f"<i>Generating direct high-speed download link...</i>",
+                    parse_mode="HTML"
+                )
+            except Exception:
+                pass
+
+            cloud_url = await upload_large_file(upload_path)
+
+        # Cleanup local files from disk immediately
+        if result.filepath:
+            cleanup_files(result.filepath)
+        if temp_dl_file:
+            cleanup_files(temp_dl_file)
+
+        effective_url = cloud_url or result.direct_url
+        if effective_url:
+            escaped_url = html.escape(effective_url, quote=True)
+            if cloud_url and "litter.catbox" in cloud_url:
+                btn_title = "⚡ Download Full HD (Direct MP4)"
+                provider_desc = "Catbox Cloud • Direct MP4 • Valid 24h"
+            elif cloud_url and "gofile" in cloud_url:
+                btn_title = "⚡ Download Full HD (Gofile Cloud)"
+                provider_desc = "Gofile Cloud • High-Speed Global CDN"
+            else:
+                btn_title = "⚡ HD Direct Download (Valid 2 Hours)"
+                provider_desc = "Direct Stream"
+
             direct_cdn_section = (
-                f"⚡ <b>Direct CDN Stream / Download:</b>\n"
-                f"🔗 <a href=\"{escaped_cdn_url}\">Click here to Download HD</a> <i>(Valid for 2 Hours)</i>\n\n"
+                f"⚡ <b>Direct Cloud Download:</b>\n"
+                f"🔗 <a href=\"{escaped_url}\">Click here to Download HD</a> <i>({provider_desc})</i>\n\n"
             )
             keyboard = [
-                [InlineKeyboardButton("⚡ HD Direct Download (Valid 2 Hours)", url=direct_cdn_url)],
+                [InlineKeyboardButton(btn_title, url=effective_url)],
                 [InlineKeyboardButton("🎵 MP3 Download", callback_data=f"dl_media:audio:{token}")],
                 [InlineKeyboardButton("🚨 Report Problem", callback_data="btn_report_problem")]
             ]
@@ -603,9 +663,9 @@ async def media_download_callback(update: Update, context: ContextTypes.DEFAULT_
             f"━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
             f"🎬 <b>{safe_title}</b>\n\n"
             f"👤 <b>Channel:</b> {safe_uploader}\n"
-            f"📦 <b>Size:</b> <b>{filesize_display}</b> (Exceeds Telegram 50 MB Limit)\n\n"
+            f"📦 <b>Size:</b> <b>{filesize_display}</b> (Full HD Quality)\n\n"
             f"{direct_cdn_section}"
-            f"⚡ <i>Telegram limits direct file delivery to 50 MB. Click above for instant high-speed HD CDN download or convert to MP3 audio below!</i>"
+            f"⚡ <i>Telegram limits in-app file delivery to 50 MB. Click the button above to download full HD media directly to your phone or computer!</i>"
         )
         await status_msg.edit_text(large_file_msg, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="HTML")
         return
@@ -756,16 +816,22 @@ async def media_download_callback(update: Update, context: ContextTypes.DEFAULT_
         # If Telegram rejected because file is too big, serve via browser URL
         err_lower = str(e).lower()
         if "too big" in err_lower or "entity too large" in err_lower or "file_too_big" in err_lower:
-            direct_cdn_url = result.direct_url
-            if direct_cdn_url:
+            from bot.cloud_storage import upload_large_file
+            cloud_url = None
+            if result.filepath and os.path.exists(result.filepath):
+                cloud_url = await upload_large_file(result.filepath)
+            
+            effective_url = cloud_url or result.direct_url
+            if effective_url:
                 try:
-                    escaped_cdn_url = html.escape(direct_cdn_url, quote=True)
+                    escaped_url = html.escape(effective_url, quote=True)
+                    btn_title = "⚡ Download Full HD (Direct MP4)" if (cloud_url and "litter.catbox" in cloud_url) else "⚡ Download Full HD (Cloud CDN)"
                     direct_cdn_section = (
-                        f"⚡ <b>Direct CDN Stream / Download:</b>\n"
-                        f"🔗 <a href=\"{escaped_cdn_url}\">Click here to Download HD</a> <i>(Valid for 2 Hours)</i>\n\n"
+                        f"⚡ <b>Direct Cloud Download:</b>\n"
+                        f"🔗 <a href=\"{escaped_url}\">Click here to Download HD</a> <i>(Cloud CDN)</i>\n\n"
                     )
                     fallback_kb = [
-                        [InlineKeyboardButton("⚡ HD Direct Download (Valid 2 Hours)", url=direct_cdn_url)],
+                        [InlineKeyboardButton(btn_title, url=effective_url)],
                         [InlineKeyboardButton("🎵 MP3 Download", callback_data=f"dl_media:audio:{token}")],
                         [InlineKeyboardButton("🚨 Report Problem", callback_data="btn_report_problem")]
                     ]
@@ -774,9 +840,10 @@ async def media_download_callback(update: Update, context: ContextTypes.DEFAULT_
                         f"👤 <b>Channel:</b> {safe_uploader}\n"
                         f"📦 <b>Size:</b> <b>{result.filesize_mb or '50+'} MB</b> (Exceeds Telegram Direct Limit)\n\n"
                         f"{direct_cdn_section}"
-                        f"⚡ <i>Telegram limits direct file delivery to 50 MB. Click above for instant high-speed HD CDN download or convert to MP3 audio below!</i>"
+                        f"⚡ <i>Telegram limits direct file delivery to 50 MB. Click above to download high-speed HD media directly!</i>"
                     )
                     await status_msg.edit_text(fallback_msg, reply_markup=InlineKeyboardMarkup(fallback_kb), parse_mode="HTML")
+                    cleanup_files(result.filepath, result.thumbnail_path)
                     return
                 except Exception:
                     pass
