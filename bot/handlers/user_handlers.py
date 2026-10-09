@@ -14,7 +14,6 @@ from bot.tracker import tracker
 from bot.downloader import download_video, download_audio, download_images, scan_url, extract_first_url, cleanup_files
 from bot.platforms.router import detect_platform
 from bot.platforms.base import ensure_ios_compatible_video
-from bot.web_player import register_stream, get_player_url, get_stream_url, get_download_url
 
 logger = logging.getLogger(__name__)
 
@@ -576,30 +575,28 @@ async def media_download_callback(update: Update, context: ContextTypes.DEFAULT_
     )
 
     if is_over_50mb:
-        stream_token = register_stream(
-            filepath=result.filepath,
-            direct_url=result.direct_url,
-            title=result.title,
-            uploader=result.uploader,
-            filesize_mb=result.filesize_mb,
-            headers=getattr(result, "headers", None),
-            is_audio=(media_type == "audio"),
-        )
-        stream_url = await get_stream_url(stream_token)
-        download_url = await get_download_url(stream_token)
-        player_url = await get_player_url(stream_token)
-
         header = get_member_header(user.id)
         new_daily_count = tracker.increment_download(user.id)
         filesize_display = f"{result.filesize_mb:.1f} MB" if result.filesize_mb else "50+ MB"
 
-        # Direct download link via server proxy guarantees anti-hotlinking headers (Bilibili/TikTok Referer)
-        # and stays valid for 2 full hours across all platforms
-        direct_download_url = download_url
-        direct_cdn_section = (
-            f"⚡ <b>High-Speed Direct Link:</b>\n"
-            f"🔗 <a href=\"{direct_download_url}\">Click here to Download HD</a> <i>(Valid for 2 Hours)</i>\n\n"
-        )
+        direct_cdn_url = result.direct_url
+        if direct_cdn_url:
+            escaped_cdn_url = html.escape(direct_cdn_url, quote=True)
+            direct_cdn_section = (
+                f"⚡ <b>Direct CDN Stream / Download:</b>\n"
+                f"🔗 <a href=\"{escaped_cdn_url}\">Click here to Download HD</a> <i>(Valid for 2 Hours)</i>\n\n"
+            )
+            keyboard = [
+                [InlineKeyboardButton("⚡ HD Direct Download (Valid 2 Hours)", url=direct_cdn_url)],
+                [InlineKeyboardButton("🎵 MP3 Download", callback_data=f"dl_media:audio:{token}")],
+                [InlineKeyboardButton("🚨 Report Problem", callback_data="btn_report_problem")]
+            ]
+        else:
+            direct_cdn_section = ""
+            keyboard = [
+                [InlineKeyboardButton("🎵 MP3 Download", callback_data=f"dl_media:audio:{token}")],
+                [InlineKeyboardButton("🚨 Report Problem", callback_data="btn_report_problem")]
+            ]
 
         large_file_msg = (
             f"{header}\n"
@@ -608,15 +605,8 @@ async def media_download_callback(update: Update, context: ContextTypes.DEFAULT_
             f"👤 <b>Channel:</b> {safe_uploader}\n"
             f"📦 <b>Size:</b> <b>{filesize_display}</b> (Exceeds Telegram 50 MB Limit)\n\n"
             f"{direct_cdn_section}"
-            f"⚡ <i>Telegram limits direct file delivery to 50 MB. Click below for instant high-speed HD download, watch in browser, or download MP3!</i>"
+            f"⚡ <i>Telegram limits direct file delivery to 50 MB. Click above for instant high-speed HD CDN download or convert to MP3 audio below!</i>"
         )
-        keyboard = [
-            [InlineKeyboardButton("⚡ HD Download (Valid 2 Hours)", url=direct_download_url)],
-            [InlineKeyboardButton("🎬 ▶️ Watch in Web Player", url=player_url)],
-            [InlineKeyboardButton("🎵 MP3 Download", callback_data=f"dl_media:audio:{token}")],
-            [InlineKeyboardButton("🚨 Report Problem", callback_data="btn_report_problem")]
-        ]
-
         await status_msg.edit_text(large_file_msg, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="HTML")
         return
 
@@ -629,21 +619,6 @@ async def media_download_callback(update: Update, context: ContextTypes.DEFAULT_
         else:
             left = max(0, limit - new_daily_count)
             quota_line = f"🆓 <b>Free Downloads: {left}/{limit} remaining today</b>"
-
-        # Register stream in web player for browser viewing
-        stream_token = register_stream(
-            filepath=result.filepath,
-            direct_url=result.direct_url,
-            title=result.title,
-            uploader=result.uploader,
-            filesize_mb=result.filesize_mb,
-            headers=getattr(result, "headers", None),
-            is_audio=(media_type == "audio"),
-        )
-        player_url = await get_player_url(stream_token)
-        player_markup = InlineKeyboardMarkup([
-            [InlineKeyboardButton("🎬 ▶️ Watch in Web Player", url=player_url)]
-        ])
 
         # File <= 50MB -> Send directly in Telegram
         header = get_member_header(user.id)
@@ -689,7 +664,6 @@ async def media_download_callback(update: Update, context: ContextTypes.DEFAULT_
                             performer=result.uploader[:64],
                             duration=result.duration,
                             thumbnail=thumb_file,
-                            reply_markup=player_markup,
                             read_timeout=300,
                             write_timeout=300,
                             parse_mode="HTML"
@@ -705,7 +679,6 @@ async def media_download_callback(update: Update, context: ContextTypes.DEFAULT_
                             performer=result.uploader[:64],
                             duration=result.duration,
                             thumbnail=None,
-                            reply_markup=player_markup,
                             read_timeout=300,
                             write_timeout=300,
                             parse_mode="HTML"
@@ -727,7 +700,6 @@ async def media_download_callback(update: Update, context: ContextTypes.DEFAULT_
                             duration=result.duration,
                             thumbnail=thumb_file,
                             supports_streaming=True,
-                            reply_markup=player_markup,
                             read_timeout=300,
                             write_timeout=300,
                             parse_mode="HTML"
@@ -742,7 +714,6 @@ async def media_download_callback(update: Update, context: ContextTypes.DEFAULT_
                             duration=result.duration,
                             thumbnail=None,
                             supports_streaming=True,
-                            reply_markup=player_markup,
                             read_timeout=300,
                             write_timeout=300,
                             parse_mode="HTML"
@@ -759,8 +730,8 @@ async def media_download_callback(update: Update, context: ContextTypes.DEFAULT_
         except Exception:
             pass
 
-        # Cleanup thumbnail immediately; video file is preserved for web player and auto-cleaned after 2h
-        cleanup_files(result.thumbnail_path)
+        # Cleanup temporary files immediately after delivery
+        cleanup_files(result.filepath, result.thumbnail_path)
 
         # If user just reached 10 downloads today, send a helpful upgrade reminder
         if not is_vip and new_daily_count >= limit:
@@ -785,41 +756,30 @@ async def media_download_callback(update: Update, context: ContextTypes.DEFAULT_
         # If Telegram rejected because file is too big, serve via browser URL
         err_lower = str(e).lower()
         if "too big" in err_lower or "entity too large" in err_lower or "file_too_big" in err_lower:
-            try:
-                stream_token = register_stream(
-                    filepath=result.filepath,
-                    direct_url=result.direct_url,
-                    title=result.title,
-                    uploader=result.uploader,
-                    filesize_mb=result.filesize_mb,
-                    headers=getattr(result, "headers", None),
-                    is_audio=(media_type == "audio"),
-                )
-                stream_url = await get_stream_url(stream_token)
-                download_url = await get_download_url(stream_token)
-                player_url = await get_player_url(stream_token)
-                direct_download_url = download_url
-                direct_cdn_section = (
-                    f"⚡ <b>High-Speed Direct Link:</b>\n"
-                    f"🔗 <a href=\"{direct_download_url}\">Click here to Download HD</a> <i>(Valid for 2 Hours)</i>\n\n"
-                )
-                fallback_msg = (
-                    f"🎬 <b>{safe_title}</b>\n\n"
-                    f"👤 <b>Channel:</b> {safe_uploader}\n"
-                    f"📦 <b>Size:</b> <b>{result.filesize_mb or '50+'} MB</b> (Exceeds Telegram Direct Limit)\n\n"
-                    f"{direct_cdn_section}"
-                    f"⚡ <i>Telegram limits direct file delivery to 50 MB. Click below for instant high-speed HD download, watch in browser, or download MP3!</i>"
-                )
-                fallback_kb = [
-                    [InlineKeyboardButton("⚡ HD Download (Valid 2 Hours)", url=direct_download_url)],
-                    [InlineKeyboardButton("🎬 ▶️ Watch in Web Player", url=player_url)],
-                    [InlineKeyboardButton("🎵 MP3 Download", callback_data=f"dl_media:audio:{token}")],
-                    [InlineKeyboardButton("🚨 Report Problem", callback_data="btn_report_problem")]
-                ]
-                await status_msg.edit_text(fallback_msg, reply_markup=InlineKeyboardMarkup(fallback_kb), parse_mode="HTML")
-                return
-            except Exception:
-                pass
+            direct_cdn_url = result.direct_url
+            if direct_cdn_url:
+                try:
+                    escaped_cdn_url = html.escape(direct_cdn_url, quote=True)
+                    direct_cdn_section = (
+                        f"⚡ <b>Direct CDN Stream / Download:</b>\n"
+                        f"🔗 <a href=\"{escaped_cdn_url}\">Click here to Download HD</a> <i>(Valid for 2 Hours)</i>\n\n"
+                    )
+                    fallback_kb = [
+                        [InlineKeyboardButton("⚡ HD Direct Download (Valid 2 Hours)", url=direct_cdn_url)],
+                        [InlineKeyboardButton("🎵 MP3 Download", callback_data=f"dl_media:audio:{token}")],
+                        [InlineKeyboardButton("🚨 Report Problem", callback_data="btn_report_problem")]
+                    ]
+                    fallback_msg = (
+                        f"🎬 <b>{safe_title}</b>\n\n"
+                        f"👤 <b>Channel:</b> {safe_uploader}\n"
+                        f"📦 <b>Size:</b> <b>{result.filesize_mb or '50+'} MB</b> (Exceeds Telegram Direct Limit)\n\n"
+                        f"{direct_cdn_section}"
+                        f"⚡ <i>Telegram limits direct file delivery to 50 MB. Click above for instant high-speed HD CDN download or convert to MP3 audio below!</i>"
+                    )
+                    await status_msg.edit_text(fallback_msg, reply_markup=InlineKeyboardMarkup(fallback_kb), parse_mode="HTML")
+                    return
+                except Exception:
+                    pass
 
         cleanup_files(result.filepath, result.thumbnail_path)
         try:
