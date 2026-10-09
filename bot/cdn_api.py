@@ -322,11 +322,17 @@ async def download_direct_cdn_stream(
     if headers:
         req_headers.update(headers)
 
+    # Route Bilibili UPOS CDN streams away from throttled Akamai to high-speed mirror
+    for akam in ["upos-hz-mirrorakam.akamaized.net", "upos-sz-mirrorali.bilivideo.com"]:
+        if akam in cdn_url:
+            cdn_url = cdn_url.replace(akam, "upos-sz-upcdnbda2.bilivideo.com")
+            break
+
     last_error = None
     for attempt in range(1, max_retries + 1):
         try:
             async with aiohttp.ClientSession() as session:
-                async with session.get(cdn_url, headers=req_headers, timeout=aiohttp.ClientTimeout(total=300, sock_read=30)) as resp:
+                async with session.get(cdn_url, headers=req_headers, timeout=aiohttp.ClientTimeout(total=900, sock_read=60)) as resp:
                     if resp.status not in (200, 206):
                         last_error = f"CDN returned HTTP {resp.status}"
                         await asyncio.sleep(1)

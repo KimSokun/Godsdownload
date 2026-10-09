@@ -30,6 +30,23 @@ def clean_bilibili_url(url: str) -> str:
     return url.split("?")[0]
 
 
+def optimize_bilibili_upos_url(cdn_url: Optional[str]) -> Optional[str]:
+    """
+    Replaces throttled / fragile Akamai UPOS CDN host with high-speed China/Global UPOS mirror.
+    Akamai drops connections on large files without browser TLS fingerprint,
+    whereas Baidu/Tencent UPOS mirrors deliver high-speed, stable streaming.
+    """
+    if not cdn_url:
+        return cdn_url
+    for akam in [
+        "upos-hz-mirrorakam.akamaized.net",
+        "upos-sz-mirrorali.bilivideo.com",
+    ]:
+        if akam in cdn_url:
+            return cdn_url.replace(akam, "upos-sz-upcdnbda2.bilivideo.com")
+    return cdn_url
+
+
 class BilibiliPlatform(BasePlatform):
     platform_id = "bilibili"
     display_name = "📺 Bilibili"
@@ -75,7 +92,8 @@ class BilibiliPlatform(BasePlatform):
                     if not durls:
                         return None
                     primary = durls[0]
-                    cdn_url = primary.get("url")
+                    raw_cdn = primary.get("url")
+                    cdn_url = optimize_bilibili_upos_url(raw_cdn)
                     size_bytes = int(primary.get("size") or 0)
                     size_mb = round(size_bytes / (1024 * 1024), 2)
 

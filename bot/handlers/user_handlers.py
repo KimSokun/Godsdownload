@@ -629,7 +629,12 @@ async def media_download_callback(update: Update, context: ContextTypes.DEFAULT_
         if temp_dl_file:
             cleanup_files(temp_dl_file)
 
-        effective_url = cloud_url or result.direct_url
+        effective_url = cloud_url
+        if not effective_url and result.direct_url:
+            raw_dl = (result.direct_url or "").lower()
+            if not ("bilibili" in raw_dl or "akamaized" in raw_dl or "googlevideo" in raw_dl or "bilivideo" in raw_dl):
+                effective_url = result.direct_url
+
         if effective_url:
             escaped_url = html.escape(effective_url, quote=True)
             if cloud_url and "litter.catbox" in cloud_url:
@@ -639,7 +644,7 @@ async def media_download_callback(update: Update, context: ContextTypes.DEFAULT_
                 btn_title = "⚡ Download Full HD (Gofile Cloud)"
                 provider_desc = "Gofile Cloud • High-Speed Global CDN"
             else:
-                btn_title = "⚡ HD Direct Download (Valid 2 Hours)"
+                btn_title = "⚡ HD Direct Download"
                 provider_desc = "Direct Stream"
 
             direct_cdn_section = (
@@ -652,8 +657,12 @@ async def media_download_callback(update: Update, context: ContextTypes.DEFAULT_
                 [InlineKeyboardButton("🚨 Report Problem", callback_data="btn_report_problem")]
             ]
         else:
-            direct_cdn_section = ""
+            direct_cdn_section = (
+                f"⚠️ <b>Cloud Storage Upload Busy</b>\n"
+                f"<i>This media is {filesize_display} (exceeds Telegram 50 MB limit). Cloud server upload is temporarily busy. Please tap Retry below:</i>\n\n"
+            )
             keyboard = [
+                [InlineKeyboardButton("🔄 Retry Download", callback_data=f"dl_media:video:{token}")],
                 [InlineKeyboardButton("🎵 MP3 Download", callback_data=f"dl_media:audio:{token}")],
                 [InlineKeyboardButton("🚨 Report Problem", callback_data="btn_report_problem")]
             ]
