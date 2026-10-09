@@ -14,6 +14,7 @@ from bot.code_watcher import start_code_watcher
 from bot.handlers.user_handlers import setup_user_handlers
 from bot.handlers.payment_handlers import setup_payment_handlers
 from bot.handlers.admin_handlers import setup_admin_handlers
+from bot.web_player import start_web_player
 
 # Configure root logger
 logging.basicConfig(
@@ -141,6 +142,9 @@ async def main(lock=None):
 
     # 1. Start Background yt-dlp Auto-Updater
     asyncio.create_task(start_auto_updater(interval_hours=6))
+
+    # 1b. Start Built-in Web Player & Direct Streaming Server (Port 8080)
+    await start_web_player(host="0.0.0.0", port=getattr(config, "web_server_port", 8080))
 
     # 2. Configure HTTP Request timeouts (300 seconds for large uploads)
     request = HTTPXRequest(
