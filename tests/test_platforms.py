@@ -6,6 +6,7 @@ from bot.platforms.base import BasePlatform
 from bot.platforms.router import detect_platform, get_platform_name, get_all_platforms
 from bot.platforms.youtube import YouTubePlatform
 from bot.platforms.tiktok import TikTokPlatform
+from bot.platforms.douyin import DouyinPlatform
 from bot.platforms.facebook import FacebookPlatform
 from bot.platforms.bilibili import BilibiliPlatform
 from bot.platforms.instagram import InstagramPlatform
@@ -35,13 +36,11 @@ class TestPlatformDetection(unittest.TestCase):
                 self.assertEqual(platform.platform_id, "youtube")
                 self.assertIn("YouTube", platform.display_name)
 
-    def test_tiktok_douyin_detection(self):
+    def test_tiktok_detection(self):
         urls = [
             "https://www.tiktok.com/@user/video/7123456789012345678",
             "https://vt.tiktok.com/ZS1234567/",
             "https://vm.tiktok.com/ZM1234567/",
-            "https://www.douyin.com/video/7123456789012345678",
-            "https://v.douyin.com/ieXabc12/",
         ]
         for url in urls:
             with self.subTest(url=url):
@@ -49,6 +48,19 @@ class TestPlatformDetection(unittest.TestCase):
                 self.assertIsInstance(platform, TikTokPlatform)
                 self.assertEqual(platform.platform_id, "tiktok")
                 self.assertIn("TikTok", platform.display_name)
+
+    def test_douyin_detection(self):
+        urls = [
+            "https://www.douyin.com/video/7123456789012345678",
+            "https://v.douyin.com/ieXabc12/",
+            "https://www.iesdouyin.com/share/video/7123456789012345678/",
+        ]
+        for url in urls:
+            with self.subTest(url=url):
+                platform = detect_platform(url)
+                self.assertIsInstance(platform, DouyinPlatform)
+                self.assertEqual(platform.platform_id, "douyin")
+                self.assertIn("Douyin", platform.display_name)
 
     def test_facebook_detection(self):
         urls = [

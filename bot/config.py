@@ -50,6 +50,7 @@ class Config:
     max_file_size_mb: float = float(os.getenv("MAX_FILE_SIZE_MB", "2000.0"))
     telegram_direct_limit_mb: float = float(os.getenv("TELEGRAM_DIRECT_LIMIT_MB", "50.0"))
     cookies_file: str = os.getenv("COOKIES_FILE", "cookies.txt").strip()
+    douyin_cookie: str = os.getenv("DOUYIN_COOKIE", "").strip()
     cobalt_api_url: str = os.getenv("COBALT_API_URL", "https://api.cobalt.tools").strip()
     proxy_url: str = os.getenv("PROXY_URL", "").strip()
     youtube_proxy: str = os.getenv("YOUTUBE_PROXY", "").strip()

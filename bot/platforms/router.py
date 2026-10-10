@@ -4,6 +4,7 @@ from typing import List, Optional
 from bot.platforms.base import BasePlatform
 from bot.platforms.youtube import YouTubePlatform
 from bot.platforms.tiktok import TikTokPlatform
+from bot.platforms.douyin import DouyinPlatform
 from bot.platforms.facebook import FacebookPlatform
 from bot.platforms.bilibili import BilibiliPlatform
 from bot.platforms.instagram import InstagramPlatform
@@ -19,6 +20,7 @@ logger = logging.getLogger(__name__)
 _PLATFORMS: List[BasePlatform] = [
     YouTubePlatform(),
     TikTokPlatform(),
+    DouyinPlatform(),
     FacebookPlatform(),
     BilibiliPlatform(),
     InstagramPlatform(),

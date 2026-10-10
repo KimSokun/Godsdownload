@@ -21,9 +21,9 @@ logger = logging.getLogger(__name__)
 
 class TikTokPlatform(BasePlatform):
     platform_id = "tiktok"
-    display_name = "🎵 TikTok / Douyin"
+    display_name = "🎵 TikTok"
     patterns = [
-        re.compile(r'(?:https?://)?(?:[a-zA-Z0-9_\.]+\.)?(?:tiktok\.com|douyin\.com)'),
+        re.compile(r'(?:https?://)?(?:[a-zA-Z0-9_\.]+\.)?tiktok\.com'),
     ]
 
     async def _fetch_tikwm(self, url: str) -> Optional[Dict[str, Any]]:
