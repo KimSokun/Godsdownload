@@ -41,8 +41,19 @@ def clean_youtube_url(url: str) -> str:
 
 
 def get_youtube_proxy() -> Optional[str]:
-    """Returns user-configured YouTube proxy or global proxy from config."""
-    return getattr(config, "youtube_proxy", "").strip() or getattr(config, "proxy_url", "").strip() or None
+    """Returns user-configured YouTube proxy, global proxy from config, or auto-detects local WARP proxy on 127.0.0.1:40000."""
+    configured = getattr(config, "youtube_proxy", "").strip() or getattr(config, "proxy_url", "").strip()
+    if configured:
+        return configured
+    try:
+        import socket
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            s.settimeout(0.2)
+            if s.connect_ex(("127.0.0.1", 40000)) == 0:
+                return "socks5://127.0.0.1:40000"
+    except Exception:
+        pass
+    return None
 
 
 class YouTubePlatform(BasePlatform):
@@ -83,6 +94,10 @@ class YouTubePlatform(BasePlatform):
             )
             opts["merge_output_format"] = "mp4"
 
+        cookie_file = get_cookie_file()
+        if cookie_file:
+            opts["cookiefile"] = cookie_file
+
         if proxy:
             opts["proxy"] = proxy
 
@@ -98,23 +113,24 @@ class YouTubePlatform(BasePlatform):
 
         configured_proxy = get_youtube_proxy()
 
-        # Step 1: Ultra-fast Direct Gigabit Download Attempt (< 2.5s)
-        direct_opts = self._get_youtube_ydl_opts(is_audio=False, download_path_template=output_base, proxy=None)
-        res = await loop.run_in_executor(None, self.execute_ytdlp_video, clean_url, output_base, max_size_mb, direct_opts)
+        # Step 1: Download attempt (using configured proxy/WARP if present, else direct)
+        first_proxy = configured_proxy if configured_proxy else None
+        first_opts = self._get_youtube_ydl_opts(is_audio=False, download_path_template=output_base, proxy=first_proxy)
+        res = await loop.run_in_executor(None, self.execute_ytdlp_video, clean_url, output_base, max_size_mb, first_opts)
         if res and res.success:
             return res
 
         err_msg = str(getattr(res, "error", "")).lower()
-        is_bot_blocked = any(k in err_msg for k in ["bot", "sign in", "login", "403", "forbidden"])
 
-        # Step 2: If bot protection triggered and a proxy is explicitly configured in .env, retry via proxy
-        if is_bot_blocked and configured_proxy:
-            logger.info(f"Direct download bot-blocked ({err_msg}). Retrying with configured proxy: {configured_proxy}")
-            proxy_opts = self._get_youtube_ydl_opts(is_audio=False, download_path_template=output_base, proxy=configured_proxy)
-            proxy_res = await loop.run_in_executor(None, self.execute_ytdlp_video, clean_url, output_base, max_size_mb, proxy_opts)
-            if proxy_res and proxy_res.success:
-                return proxy_res
-            err_msg = str(getattr(proxy_res, "error", "")).lower()
+        # Step 2: Fallback attempt if first attempt failed
+        fallback_proxy = None if first_proxy else configured_proxy
+        if fallback_proxy is not None or (first_proxy and not res.success):
+            logger.info(f"Primary YouTube download attempt failed ({err_msg}). Trying fallback...")
+            fallback_opts = self._get_youtube_ydl_opts(is_audio=False, download_path_template=output_base, proxy=fallback_proxy)
+            fallback_res = await loop.run_in_executor(None, self.execute_ytdlp_video, clean_url, output_base, max_size_mb, fallback_opts)
+            if fallback_res and fallback_res.success:
+                return fallback_res
+            err_msg = str(getattr(fallback_res, "error", "")).lower()
 
         # Step 3: Fast-fail without freezing if bot protection requires cookies/login
         if any(k in err_msg for k in ["sign in to confirm you're not a bot", "sign in", "login_required", "bot"]):
@@ -135,23 +151,24 @@ class YouTubePlatform(BasePlatform):
 
         configured_proxy = get_youtube_proxy()
 
-        # Step 1: Direct Fast Attempt (< 2.5s)
-        direct_opts = self._get_youtube_ydl_opts(is_audio=True, download_path_template=output_base, proxy=None)
-        res = await loop.run_in_executor(None, self.execute_ytdlp_audio, clean_url, output_base, max_size_mb, direct_opts)
+        # Step 1: Download attempt (using configured proxy/WARP if present, else direct)
+        first_proxy = configured_proxy if configured_proxy else None
+        first_opts = self._get_youtube_ydl_opts(is_audio=True, download_path_template=output_base, proxy=first_proxy)
+        res = await loop.run_in_executor(None, self.execute_ytdlp_audio, clean_url, output_base, max_size_mb, first_opts)
         if res and res.success:
             return res
 
         err_msg = str(getattr(res, "error", "")).lower()
-        is_bot_blocked = any(k in err_msg for k in ["bot", "sign in", "login", "403", "forbidden"])
 
-        # Step 2: Retry with configured proxy if present
-        if is_bot_blocked and configured_proxy:
-            logger.info(f"Direct audio download bot-blocked ({err_msg}). Retrying with configured proxy: {configured_proxy}")
-            proxy_opts = self._get_youtube_ydl_opts(is_audio=True, download_path_template=output_base, proxy=configured_proxy)
-            proxy_res = await loop.run_in_executor(None, self.execute_ytdlp_audio, clean_url, output_base, max_size_mb, proxy_opts)
-            if proxy_res and proxy_res.success:
-                return proxy_res
-            err_msg = str(getattr(proxy_res, "error", "")).lower()
+        # Step 2: Fallback attempt if first attempt failed
+        fallback_proxy = None if first_proxy else configured_proxy
+        if fallback_proxy is not None or (first_proxy and not res.success):
+            logger.info(f"Primary YouTube audio download attempt failed ({err_msg}). Trying fallback...")
+            fallback_opts = self._get_youtube_ydl_opts(is_audio=True, download_path_template=output_base, proxy=fallback_proxy)
+            fallback_res = await loop.run_in_executor(None, self.execute_ytdlp_audio, clean_url, output_base, max_size_mb, fallback_opts)
+            if fallback_res and fallback_res.success:
+                return fallback_res
+            err_msg = str(getattr(fallback_res, "error", "")).lower()
 
         # Step 3: Fast-fail without freezing if bot protection requires cookies/login
         if any(k in err_msg for k in ["sign in to confirm you're not a bot", "sign in", "login_required", "bot"]):
