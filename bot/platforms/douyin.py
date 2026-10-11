@@ -3,8 +3,10 @@ import re
 import uuid
 import asyncio
 import logging
+import time
 from typing import Optional, Dict, Any, List
 import aiohttp
+import requests
 import json
 
 from bot.config import config
@@ -17,8 +19,43 @@ from bot.platforms.base import (
     TELEGRAM_FILE_LIMIT_BYTES,
 )
 from bot.cdn_api import download_direct_cdn_stream, expand_redirect_url
+from bot.platforms.douyin_abogus import ABogus
+from bot.platforms.douyin_websign import sign as websign_sign, encode_pairs as websign_encode_pairs, UIFID_COOKIE_NAMES
 
 logger = logging.getLogger(__name__)
+
+_CACHED_TTWID: Optional[str] = None
+_CACHED_TTWID_TIME: float = 0.0
+
+
+def get_cached_ttwid_sync(user_agent: str) -> str:
+    """Fetches and caches valid guest ttwid session cookie with 12h TTL."""
+    global _CACHED_TTWID, _CACHED_TTWID_TIME
+    now = time.time()
+    if _CACHED_TTWID and (now - _CACHED_TTWID_TIME < 43200):
+        return _CACHED_TTWID
+    url = "https://ttwid.bytedance.com/ttwid/union/register/"
+    post_data = {
+        "region": "cn",
+        "aid": 1768,
+        "needFid": "false",
+        "service": "www.ixigua.com",
+        "migrate_info": {"ticket": "", "source": "node"},
+        "cbUrlProtocol": "https",
+        "union": "true",
+    }
+    headers = {"User-Agent": user_agent, "Content-Type": "application/json"}
+    try:
+        r = requests.post(url, json=post_data, headers=headers, timeout=5)
+        if r.status_code == 200:
+            c = r.cookies.get("ttwid")
+            if c:
+                _CACHED_TTWID = c
+                _CACHED_TTWID_TIME = now
+                return _CACHED_TTWID
+    except Exception as e:
+        logger.debug(f"Failed to fetch ttwid: {e}")
+    return ""
 
 
 def get_douyin_cookie_string() -> str:
@@ -45,6 +82,11 @@ class DouyinPlatform(BasePlatform):
     """
     Dedicated platform handler for Douyin (Chinese TikTok: douyin.com / iesdouyin.com).
     Kept strictly independent from TikTok to avoid impacting global tiktok.com downloads.
+    Features multi-tiered extraction:
+      1. Official Mobile Feed API (api.amemv.com): ultra-fast, direct watermark-free CDN links.
+      2. Native ABogus + Websign Signed Web Detail: full high-res photo albums & notes parser.
+      3. Open-source backup microservice (if DOUYIN_API_URL configured).
+      4. SSR HTML fallback & yt-dlp backup.
     """
     platform_id = "douyin"
     display_name = "🇨🇳 Douyin (抖音)"
@@ -67,30 +109,131 @@ class DouyinPlatform(BasePlatform):
         return None
 
     async def _fetch_ttwid(self) -> Optional[str]:
-        """Registers a guest session with ByteDance to acquire a valid ttwid cookie."""
-        url = "https://ttwid.bytedance.com/ttwid/union/register/"
-        post_data = {
-            "region": "cn",
-            "aid": 1768,
-            "needFid": "false",
-            "service": "www.ixigua.com",
-            "migrate_info": {"ticket": "", "source": "node"},
-            "cbUrlProtocol": "https",
-            "union": "true",
-        }
+        """Async wrapper for ttwid retrieval."""
+        ua = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(None, get_cached_ttwid_sync, ua)
+
+    async def _fetch_amemv_feed(self, aweme_id: str) -> Optional[Dict[str, Any]]:
+        """
+        Queries official Douyin mobile feed endpoints (high-speed, direct CDN, zero cookies).
+        Extremely reliable for Douyin videos.
+        """
+        endpoints = [
+            f"https://api.amemv.com/aweme/v1/feed/?aweme_id={aweme_id}",
+            f"https://api5-normal-c-lq.amemv.com/aweme/v1/feed/?aweme_id={aweme_id}",
+        ]
         headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36"
+            "User-Agent": "com.ss.android.ugc.aweme/260101 (Linux; U; Android 10; zh_CN; MI 9; Build/QKQ1.190825.002; Cronet/TTNetVersion:a6015b3c 2023-03-24 QuicVersion:4690989b 2023-03-14)",
+            "Accept": "application/json",
         }
+        for ep in endpoints:
+            try:
+                async with aiohttp.ClientSession(headers=headers) as session:
+                    async with session.get(ep, timeout=aiohttp.ClientTimeout(total=4.0)) as resp:
+                        if resp.status == 200:
+                            data = await resp.json()
+                            aweme_list = data.get("aweme_list", []) if isinstance(data, dict) else []
+                            for item in aweme_list:
+                                if str(item.get("aweme_id")) == str(aweme_id) or len(aweme_list) == 1:
+                                    parsed = self._normalize_item(item)
+                                    if parsed:
+                                        logger.info(f"✅ Resolved Douyin media via amemv feed: {parsed.get('title')}")
+                                        return parsed
+            except Exception as e:
+                logger.debug(f"amemv feed error for {ep}: {e}")
+        return None
+
+    def _execute_signed_web_detail(self, aweme_id: str, is_note: bool) -> Optional[Dict[str, Any]]:
+        """
+        Queries Douyin Web Detail API using pure Python native a_bogus + x-secsdk-web-signature + ttwid.
+        Resolves Douyin photo notes (image slideshows) and acts as bulletproof video backup.
+        """
+        ua = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
+        signer = ABogus(ua)
+        ttwid = get_cached_ttwid_sync(ua)
+
+        session = requests.Session()
+        custom_cookie = get_douyin_cookie_string()
+
+        # Seed session cookies
+        init_url = f"https://www.douyin.com/note/{aweme_id}" if is_note else f"https://www.douyin.com/video/{aweme_id}"
         try:
-            async with aiohttp.ClientSession() as session:
-                async with session.post(url, json=post_data, headers=headers, timeout=aiohttp.ClientTimeout(total=2.5)) as resp:
-                    if resp.status == 200:
-                        cookie = resp.cookies.get("ttwid")
-                        if cookie:
-                            return cookie.value
+            session.get(init_url, headers={"User-Agent": ua}, timeout=4)
         except Exception:
             pass
+
+        if ttwid:
+            session.cookies.set("ttwid", ttwid, domain=".douyin.com")
+
+        uifid = session.cookies.get("UIFID_TEMP")
+        if not uifid:
+            for name in UIFID_COOKIE_NAMES:
+                val = session.cookies.get(name)
+                if val:
+                    uifid = val
+                    break
+        if not uifid:
+            uifid = "8d1db381e6ede33be9bff1834f9f1e38c00552f2cfff1fad413024126227b7e846c3ec45fc0b9deebfa7af18307018bb19f4fdfa0757ec53638e3e0619ab4bc19e360a6fdea65bb48af0abdf012f103c"
+
+        pairs = [
+            ("device_platform", "webapp"),
+            ("aid", "6383"),
+            ("channel", "channel_pc_web"),
+            ("aweme_id", str(aweme_id)),
+            ("update_version_code", "170400"),
+            ("pc_client_type", "1"),
+            ("version_code", "290100"),
+            ("version_name", "29.1.0"),
+            ("cookie_enabled", "true"),
+            ("screen_width", "1920"),
+            ("screen_height", "1080"),
+            ("browser_language", "zh-CN"),
+            ("browser_platform", "Win32"),
+            ("browser_name", "Chrome"),
+            ("browser_version", "122.0.0.0"),
+            ("browser_online", "true"),
+        ]
+
+        base_query = websign_encode_pairs(pairs)
+        bogus_val = signer.get_value(base_query)
+        pairs.append(("a_bogus", bogus_val))
+
+        signed_query, sig, sig_headers = websign_sign(pairs, uifid)
+        api_url = f"https://www.douyin.com/aweme/v1/web/aweme/detail/?{signed_query}"
+
+        req_headers = {
+            "User-Agent": ua,
+            "Referer": init_url,
+            "Accept": "application/json, text/plain, */*",
+            "Accept-Language": "zh-CN,zh;q=0.9",
+        }
+        req_headers.update(sig_headers)
+        if custom_cookie:
+            for item in custom_cookie.split(";"):
+                if "=" in item:
+                    k, v = item.strip().split("=", 1)
+                    session.cookies.set(k.strip(), v.strip(), domain=".douyin.com")
+
+        try:
+            resp = session.get(api_url, headers=req_headers, timeout=6)
+            if resp.status_code == 200 and resp.text:
+                data = resp.json()
+                detail = data.get("aweme_detail")
+                if detail:
+                    parsed = self._normalize_item(detail)
+                    if parsed:
+                        logger.info(f"✅ Resolved Douyin media via signed web detail: {parsed.get('title')}")
+                        return parsed
+        except Exception as e:
+            logger.debug(f"Signed web detail error for {aweme_id}: {e}")
+
         return None
+
+    async def _fetch_signed_web_detail(self, aweme_id: str, is_note: bool = False) -> Optional[Dict[str, Any]]:
+        """Async executor wrapper for native signed web detail query."""
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(None, self._execute_signed_web_detail, aweme_id, is_note)
 
     async def _fetch_opensource_api(self, clean_url: str, aweme_id: Optional[str]) -> Optional[Dict[str, Any]]:
         """
@@ -106,7 +249,6 @@ class DouyinPlatform(BasePlatform):
             "Accept": "application/json",
         }
 
-        # Try common REST endpoints of Douyin_TikTok_Download_API & related wrappers
         candidate_urls = [
             f"{api_base}/api/v1/parse?url={clean_url}",
             f"{api_base}/api/hybrid/video_data?url={clean_url}",
@@ -125,7 +267,6 @@ class DouyinPlatform(BasePlatform):
                             if not data:
                                 continue
 
-                            # Standard envelope unwrapping
                             item = data.get("data") or data.get("result") or data
 
                             title = item.get("desc") or item.get("title") or "Douyin Media"
@@ -135,7 +276,6 @@ class DouyinPlatform(BasePlatform):
                                 else item.get("author") or "Douyin Creator"
                             )
 
-                            # 1. Image Album / Slideshow
                             images_raw = item.get("images") or item.get("image_urls") or []
                             if images_raw:
                                 img_list = []
@@ -158,7 +298,6 @@ class DouyinPlatform(BasePlatform):
                                         "audio_url": item.get("music", {}).get("play_url", {}).get("uri") if isinstance(item.get("music"), dict) else item.get("music_url"),
                                     }
 
-                            # 2. HD Video
                             video_url = (
                                 item.get("video_url")
                                 or item.get("url")
@@ -228,7 +367,6 @@ class DouyinPlatform(BasePlatform):
                             if not html:
                                 continue
 
-                            # 1. Search for window._ROUTER_DATA
                             m_router = re.search(r'window\._ROUTER_DATA\s*=\s*(\{.+?\});?</script>', html, re.DOTALL)
                             if m_router:
                                 try:
@@ -246,7 +384,6 @@ class DouyinPlatform(BasePlatform):
                                 except Exception:
                                     pass
 
-                            # 2. Search for __UNIVERSAL_DATA_FOR_REHYDRATION__
                             m_univ = re.search(r'<script\s+id=[\'"]__UNIVERSAL_DATA_FOR_REHYDRATION__[\'"][^>]*>(.*?)</script>', html, re.DOTALL)
                             if m_univ:
                                 try:
@@ -263,7 +400,6 @@ class DouyinPlatform(BasePlatform):
                                 except Exception:
                                     pass
 
-                            # 3. Search for RENDER_DATA
                             m_render = re.search(r'<script\s+id=[\'"]RENDER_DATA[\'"][^>]*>(.*?)</script>', html, re.DOTALL)
                             if m_render:
                                 try:
@@ -288,18 +424,31 @@ class DouyinPlatform(BasePlatform):
         if not item or not isinstance(item, dict):
             return None
 
-        title = item.get("desc") or "Douyin Video"
+        title = item.get("desc") or "Douyin Media"
         author = item.get("author", {}).get("nickname") or "Douyin Creator"
 
-        # Check for photo slideshow / note
+        # 1. Check for photo slideshow / note
         images_raw = item.get("images") or []
         if images_raw:
             image_urls = []
             for img in images_raw:
-                urls = img.get("url_list", []) if isinstance(img, dict) else []
-                if urls:
-                    image_urls.append(urls[-1])
+                if isinstance(img, dict):
+                    urls = img.get("url_list", [])
+                    if urls:
+                        image_urls.append(urls[-1])
+                elif isinstance(img, str):
+                    image_urls.append(img)
             if image_urls:
+                music_url = None
+                music = item.get("music")
+                if isinstance(music, dict):
+                    m_play = music.get("play_url", {})
+                    if isinstance(m_play, dict):
+                        m_list = m_play.get("url_list", [])
+                        music_url = m_list[0] if m_list else m_play.get("uri")
+                    elif music.get("play_url"):
+                        music_url = music["play_url"]
+
                 return {
                     "type": "images",
                     "platform": self.display_name,
@@ -307,10 +456,10 @@ class DouyinPlatform(BasePlatform):
                     "image_urls": image_urls,
                     "title": title,
                     "uploader": author,
-                    "audio_url": item.get("music", {}).get("play_url", {}).get("uri") if isinstance(item.get("music"), dict) else None,
+                    "audio_url": music_url,
                 }
 
-        # Check for video
+        # 2. Check for video
         video_info = item.get("video", {})
         play_addr = video_info.get("play_addr", {}) if isinstance(video_info, dict) else {}
         urls = play_addr.get("url_list", []) if isinstance(play_addr, dict) else []
@@ -319,6 +468,16 @@ class DouyinPlatform(BasePlatform):
             video_url = urls[0].replace("playwm", "play")
 
         if video_url:
+            music_url = None
+            music = item.get("music")
+            if isinstance(music, dict):
+                m_play = music.get("play_url", {})
+                if isinstance(m_play, dict):
+                    m_list = m_play.get("url_list", [])
+                    music_url = m_list[0] if m_list else m_play.get("uri")
+                elif music.get("play_url"):
+                    music_url = music["play_url"]
+
             return {
                 "type": "video",
                 "platform": self.display_name,
@@ -327,118 +486,47 @@ class DouyinPlatform(BasePlatform):
                 "title": title,
                 "uploader": author,
                 "video_url": video_url,
-                "audio_url": item.get("music", {}).get("play_url", {}).get("uri") if isinstance(item.get("music"), dict) else None,
+                "audio_url": music_url,
                 "thumbnail_url": video_info.get("cover", {}).get("url_list", [None])[0] if isinstance(video_info, dict) else None,
             }
 
         return None
 
-    async def _fetch_iesdouyin_api(self, aweme_id: str) -> Optional[Dict[str, Any]]:
-        """Queries the mobile iesdouyin iteminfo API."""
-        api_url = f"https://www.iesdouyin.com/web/api/v2/aweme/iteminfo/?item_ids={aweme_id}"
-        headers = {
-            "User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.0 Mobile/15E148 Safari/604.1",
-            "Referer": "https://www.douyin.com/",
-        }
-        try:
-            async with aiohttp.ClientSession(headers=headers) as session:
-                async with session.get(api_url, timeout=aiohttp.ClientTimeout(total=2.5)) as resp:
-                    if resp.status == 200:
-                        text = await resp.text()
-                        if text:
-                            data = json.loads(text)
-                            items = data.get("item_list", [])
-                            if items:
-                                return items[0]
-        except Exception as e:
-            logger.debug(f"iesdouyin API error: {e}")
-        return None
-
-    async def _fetch_web_detail(self, aweme_id: str) -> Optional[Dict[str, Any]]:
-        """Queries the web detail API with guest ttwid session and combined cookies."""
-        ttwid = await self._fetch_ttwid()
-        cookie_header = f"ttwid={ttwid}; s_v_web_id=verify_guest;" if ttwid else "s_v_web_id=verify_guest;"
-        custom_cookie = get_douyin_cookie_string()
-        if custom_cookie:
-            cookie_header = f"{custom_cookie}; {cookie_header}"
-
-        url = "https://www.douyin.com/aweme/v1/web/aweme/detail/"
-        params = {
-            "aweme_id": aweme_id,
-            "aid": "6383",
-            "device_platform": "webapp",
-            "cookie_enabled": "true",
-            "browser_language": "zh-CN",
-            "browser_platform": "Win32",
-            "browser_name": "Chrome",
-            "browser_version": "128.0.0.0",
-        }
-        headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36",
-            "Referer": "https://www.douyin.com/",
-            "Cookie": cookie_header,
-        }
-        try:
-            async with aiohttp.ClientSession(headers=headers) as session:
-                async with session.get(url, params=params, timeout=aiohttp.ClientTimeout(total=2.5)) as resp:
-                    if resp.status == 200:
-                        data = await resp.json()
-                        detail = data.get("aweme_detail")
-                        if detail:
-                            return detail
-        except Exception as e:
-            logger.debug(f"Douyin web detail API error: {e}")
-        return None
-
-    async def _resolve_play_stream(self, video_uri: str) -> Optional[str]:
-        """Resolves watermark-free play stream URL by following redirect."""
-        headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-            "Referer": "https://www.douyin.com/",
-        }
-        play_url = f"https://aweme.snssdk.com/aweme/v1/play/?video_id={video_uri}&ratio=1080p&line=0"
-        try:
-            async with aiohttp.ClientSession(headers=headers) as session:
-                async with session.get(play_url, allow_redirects=False, timeout=aiohttp.ClientTimeout(total=2.5)) as resp:
-                    location = resp.headers.get("Location")
-                    if location:
-                        return location
-        except Exception:
-            pass
-        return None
-
     async def fast_scan(self, url: str) -> Optional[Dict[str, Any]]:
-        """Fast scan Douyin links across all acceleration layers."""
+        """Fast scan Douyin links across all acceleration and backup layers."""
         clean_url = await expand_redirect_url(url)
         aweme_id = self.extract_aweme_id(clean_url)
+        is_note = ("/note/" in clean_url)
 
-        # 1. Try Configured Open-Source API (Fastest if enabled)
+        # 1. Configured Open-Source API (Fastest if enabled)
         api_result = await self._fetch_opensource_api(clean_url, aweme_id)
         if api_result:
             return api_result
 
-        # 2. Try SSR HTML Extraction (Direct CDN links, no sign)
+        # 2. For Video: Primary Fast Path via official mobile feed (zero delay, direct CDN)
+        if aweme_id and not is_note:
+            amemv_result = await self._fetch_amemv_feed(aweme_id)
+            if amemv_result:
+                return amemv_result
+
+        # 3. For Note & Video Backup: Signed Web Detail API (ABogus + websign + ttwid)
+        if aweme_id:
+            signed_result = await self._fetch_signed_web_detail(aweme_id, is_note=is_note)
+            if signed_result:
+                return signed_result
+
+        # 4. Fallback for Video if is_note was True but signed detail had no images
+        if aweme_id and is_note:
+            amemv_result = await self._fetch_amemv_feed(aweme_id)
+            if amemv_result:
+                return amemv_result
+
+        # 5. SSR HTML Extraction (Direct CDN links, no sign)
         ssr_result = await self._fetch_ssr_detail(clean_url, aweme_id)
         if ssr_result:
             return ssr_result
 
-        # 3. Try Web Detail API
-        if aweme_id:
-            detail = await self._fetch_web_detail(aweme_id)
-            if detail:
-                parsed = self._normalize_item(detail)
-                if parsed:
-                    return parsed
-
-        # 4. Try mobile iteminfo
-        if aweme_id:
-            item = await self._fetch_iesdouyin_api(aweme_id)
-            if item:
-                parsed = self._normalize_item(item)
-                if parsed:
-                    return parsed
-
-        # 5. Fallback: yt-dlp metadata dump
+        # 6. Fallback: yt-dlp metadata dump
         try:
             ydl_opts = {
                 "quiet": True,
@@ -495,6 +583,10 @@ class DouyinPlatform(BasePlatform):
 
         scan = await self.fast_scan(clean_url)
 
+        # If scan found images, route to download_images
+        if scan and scan.get("image_urls"):
+            return await self.download_images(clean_url)
+
         # If fast scan found direct watermark-free video CDN URL
         if scan and scan.get("video_url"):
             video_url = scan["video_url"]
@@ -535,7 +627,7 @@ class DouyinPlatform(BasePlatform):
                     is_over_50mb=(f_size > TELEGRAM_FILE_LIMIT_BYTES),
                 )
 
-        # Fallback to yt-dlp worker in thread executor (correctly mapped to execute_ytdlp_video)
+        # Fallback to yt-dlp worker in thread executor
         cookie_str = get_douyin_cookie_string()
         extra_opts = {}
         if cookie_str:
@@ -592,7 +684,7 @@ class DouyinPlatform(BasePlatform):
                     headers=cdn_headers,
                 )
 
-        # Fallback to yt-dlp audio worker in thread executor (correctly mapped to execute_ytdlp_audio)
+        # Fallback to yt-dlp audio worker in thread executor
         cookie_str = get_douyin_cookie_string()
         extra_opts = {}
         if cookie_str:
@@ -606,7 +698,8 @@ class DouyinPlatform(BasePlatform):
 
     async def download_images(self, url: str) -> Any:
         from bot.downloader import DownloadResult
-        scan = await self.fast_scan(url)
+        clean_url = await expand_redirect_url(url)
+        scan = await self.fast_scan(clean_url)
         if scan and scan.get("image_urls"):
             return DownloadResult(
                 success=True,
@@ -616,4 +709,8 @@ class DouyinPlatform(BasePlatform):
                 uploader=scan.get("uploader", "Douyin Creator"),
                 direct_url=scan["image_urls"][0] if scan["image_urls"] else None,
             )
-        return await super().download_images(url)
+        # If user passed a video link to image download, return video download
+        if scan and scan.get("video_url"):
+            return await self.download_video(clean_url)
+
+        return await super().download_images(clean_url)
