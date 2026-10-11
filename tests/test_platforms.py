@@ -876,6 +876,165 @@ class TestFacebookPlatformDetailed(unittest.TestCase):
         asyncio.run(_run())
 
 
+class TestDouyinPlatform(unittest.TestCase):
+    """Verifies Douyin China video/photos download, open-source API support, and fallback execution."""
+
+    def setUp(self):
+        self.platform = DouyinPlatform()
+
+    def test_extract_aweme_id(self):
+        self.assertEqual(
+            self.platform.extract_aweme_id("https://www.douyin.com/video/7123456789012345678"),
+            "7123456789012345678"
+        )
+        self.assertEqual(
+            self.platform.extract_aweme_id("https://www.douyin.com/note/7987654321098765432"),
+            "7987654321098765432"
+        )
+        self.assertEqual(
+            self.platform.extract_aweme_id("https://www.douyin.com/?modal_id=7123456789012345678"),
+            "7123456789012345678"
+        )
+
+    def test_douyin_fast_scan_opensource_api(self):
+        async def _run():
+            mock_api_data = {
+                "type": "video",
+                "platform": self.platform.display_name,
+                "platform_id": self.platform.platform_id,
+                "image_urls": [],
+                "title": "Chinese Martial Arts",
+                "uploader": "Douyin Master",
+                "video_url": "https://v26-web.douyinvod.com/video/tos/test.mp4",
+                "audio_url": "https://sf3-cdn-tos.douyinstatic.com/audio/test.mp3",
+                "thumbnail_url": "https://p3.douyinpic.com/cover/test.jpg",
+            }
+            with patch.object(self.platform, "_fetch_opensource_api", new_callable=AsyncMock) as mock_api:
+                mock_api.return_value = mock_api_data
+                scan = await self.platform.fast_scan("https://www.douyin.com/video/7123456789012345678")
+                self.assertIsNotNone(scan)
+                self.assertEqual(scan["type"], "video")
+                self.assertEqual(scan["title"], "Chinese Martial Arts")
+                self.assertEqual(scan["video_url"], "https://v26-web.douyinvod.com/video/tos/test.mp4")
+        asyncio.run(_run())
+
+    def test_douyin_fast_scan_ssr_photos(self):
+        async def _run():
+            mock_ssr_data = {
+                "type": "images",
+                "platform": self.platform.display_name,
+                "platform_id": self.platform.platform_id,
+                "image_urls": [
+                    "https://p3.douyinpic.com/img1.jpg",
+                    "https://p3.douyinpic.com/img2.jpg",
+                ],
+                "title": "Beijing Photo Slideshow",
+                "uploader": "Traveler",
+                "audio_url": None,
+            }
+            with patch.object(self.platform, "_fetch_opensource_api", new_callable=AsyncMock) as mock_api, \
+                 patch.object(self.platform, "_fetch_ssr_detail", new_callable=AsyncMock) as mock_ssr:
+                mock_api.return_value = None
+                mock_ssr.return_value = mock_ssr_data
+                scan = await self.platform.fast_scan("https://www.douyin.com/note/7123456789012345678")
+                self.assertIsNotNone(scan)
+                self.assertEqual(scan["type"], "images")
+                self.assertEqual(len(scan["image_urls"]), 2)
+        asyncio.run(_run())
+
+    def test_douyin_download_video_direct_success(self):
+        async def _run():
+            mock_scan = {
+                "type": "video",
+                "title": "Kung Fu Video",
+                "uploader": "Master",
+                "video_url": "https://v26-web.douyinvod.com/video/test.mp4",
+            }
+            with patch.object(self.platform, "fast_scan", new_callable=AsyncMock) as mock_scan_fn, \
+                 patch("bot.platforms.douyin.download_direct_cdn_stream", new_callable=AsyncMock) as mock_stream, \
+                 patch("os.path.exists", return_value=True), \
+                 patch("os.path.getsize", return_value=25 * 1024 * 1024):
+                mock_scan_fn.return_value = mock_scan
+                mock_stream.return_value = (True, 25 * 1024 * 1024, 25.0, None)
+
+                res = await self.platform.download_video("https://www.douyin.com/video/7123456789012345678")
+                self.assertTrue(res.success)
+                self.assertFalse(res.is_over_50mb)
+                self.assertEqual(res.title, "Kung Fu Video")
+                self.assertIsNotNone(res.filepath)
+        asyncio.run(_run())
+
+    def test_douyin_download_video_over_50mb(self):
+        async def _run():
+            mock_scan = {
+                "type": "video",
+                "title": "Long Douyin Movie",
+                "uploader": "Cinema",
+                "video_url": "https://v26-web.douyinvod.com/video/movie.mp4",
+            }
+            with patch.object(self.platform, "fast_scan", new_callable=AsyncMock) as mock_scan_fn, \
+                 patch("bot.platforms.douyin.download_direct_cdn_stream", new_callable=AsyncMock) as mock_stream:
+                mock_scan_fn.return_value = mock_scan
+                mock_stream.return_value = (False, 0, 120.0, "FILE_TOO_LARGE:120.0:2000.0")
+
+                res = await self.platform.download_video("https://www.douyin.com/video/7123456789012345678")
+                self.assertTrue(res.success)
+                self.assertTrue(res.is_over_50mb)
+                self.assertEqual(res.direct_url, "https://v26-web.douyinvod.com/video/movie.mp4")
+        asyncio.run(_run())
+
+    def test_douyin_note_routes_to_images(self):
+        async def _run():
+            from bot.downloader import DownloadResult
+            with patch.object(self.platform, "download_images", new_callable=AsyncMock) as mock_dl_img:
+                mock_dl_img.return_value = DownloadResult(
+                    success=True,
+                    is_image=True,
+                    image_urls=["https://p3.douyinpic.com/1.jpg"],
+                    title="Douyin Note",
+                )
+                res = await self.platform.download_video("https://www.douyin.com/note/7123456789012345678")
+                self.assertTrue(res.success)
+                self.assertTrue(res.is_image)
+                mock_dl_img.assert_awaited_once()
+        asyncio.run(_run())
+
+    def test_douyin_download_video_fallback(self):
+        async def _run():
+            from bot.downloader import DownloadResult
+            with patch.object(self.platform, "fast_scan", new_callable=AsyncMock) as mock_scan, \
+                 patch.object(self.platform, "execute_ytdlp_video") as mock_exec:
+                mock_scan.return_value = None
+                mock_exec.return_value = DownloadResult(
+                    success=True,
+                    filepath="/tmp/douyin_test.mp4",
+                    title="Fallback Video",
+                )
+                res = await self.platform.download_video("https://www.douyin.com/video/7123456789012345678")
+                self.assertTrue(res.success)
+                self.assertEqual(res.title, "Fallback Video")
+                mock_exec.assert_called_once()
+        asyncio.run(_run())
+
+    def test_douyin_download_audio_fallback(self):
+        async def _run():
+            from bot.downloader import DownloadResult
+            with patch.object(self.platform, "fast_scan", new_callable=AsyncMock) as mock_scan, \
+                 patch.object(self.platform, "execute_ytdlp_audio") as mock_exec:
+                mock_scan.return_value = None
+                mock_exec.return_value = DownloadResult(
+                    success=True,
+                    filepath="/tmp/douyin_test.mp3",
+                    title="Fallback Audio",
+                    is_audio=True,
+                )
+                res = await self.platform.download_audio("https://www.douyin.com/video/7123456789012345678")
+                self.assertTrue(res.success)
+                self.assertTrue(res.is_audio)
+                mock_exec.assert_called_once()
+        asyncio.run(_run())
+
+
 if __name__ == "__main__":
     unittest.main()
 

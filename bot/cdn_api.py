@@ -351,12 +351,18 @@ async def download_direct_cdn_stream(
             "-x", "16",
             "-s", "16",
             "-j", "16",
-            "-k", "2M",
+            "-k", "1M",
+            "--split=16",
             "--min-split-size=1M",
             "--max-connection-per-server=16",
+            "--file-allocation=none",
             "--summary-interval=0",
             "--allow-overwrite=true",
             "--auto-file-renaming=false",
+            "--connect-timeout=10",
+            "--timeout=30",
+            "--max-tries=3",
+            "--retry-wait=1",
             "-d", out_dir,
             "-o", out_file,
         ]
@@ -384,11 +390,12 @@ async def download_direct_cdn_stream(
         except Exception as e:
             logger.warning(f"aria2c accelerated download failed ({e}), falling back to aiohttp...")
 
-    # 2. Fallback: standard aiohttp sequential chunk streamer
+    # 2. Fallback: optimized high-throughput aiohttp chunk streamer
     last_error = None
     for attempt in range(1, max_retries + 1):
         try:
-            async with aiohttp.ClientSession() as session:
+            connector = aiohttp.TCPConnector(limit=0, ttl_dns_cache=300, enable_cleanup_closed=True)
+            async with aiohttp.ClientSession(connector=connector, read_bufsize=2 * 1024 * 1024) as session:
                 async with session.get(cdn_url, headers=req_headers, timeout=aiohttp.ClientTimeout(total=900, sock_read=60)) as resp:
                     if resp.status not in (200, 206):
                         last_error = f"CDN returned HTTP {resp.status}"
@@ -409,7 +416,7 @@ async def download_direct_cdn_stream(
                     max_bytes = int(max_size_mb * 1024 * 1024)
 
                     async with aiofiles.open(output_filepath, "wb") as f:
-                        async for chunk in resp.content.iter_chunked(256 * 1024):
+                        async for chunk in resp.content.iter_chunked(1024 * 1024):
                             total_bytes += len(chunk)
                             if total_bytes > max_bytes:
                                 return False, 0, 0.0, f"FILE_TOO_LARGE:{round(total_bytes/(1024*1024), 2)}:{max_size_mb}"

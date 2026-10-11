@@ -517,8 +517,8 @@ class BasePlatform(ABC):
             "no_warnings": True,
             "writethumbnail": True,
             "updatetime": False,
-            "concurrent_fragment_downloads": 4,
-            "buffersize": 1048576,        # 1MB buffer
+            "concurrent_fragment_downloads": 8,
+            "buffersize": 2097152,        # 2MB buffer
             "http_chunk_size": 10485760,  # 10MB chunk
             "retries": 10,
             "fragment_retries": 10,
@@ -558,8 +558,8 @@ class BasePlatform(ABC):
             "quiet": True,
             "no_warnings": True,
             "writethumbnail": True,
-            "concurrent_fragment_downloads": 4,
-            "buffersize": 1048576,
+            "concurrent_fragment_downloads": 8,
+            "buffersize": 2097152,
             "retries": 10,
             "fragment_retries": 10,
             "file_access_retries": 3,
