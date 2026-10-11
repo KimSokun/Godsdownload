@@ -1,8 +1,11 @@
+import os
+import datetime
 import logging
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import ContextTypes, CommandHandler, CallbackQueryHandler
+from telegram.ext import ContextTypes, CommandHandler, CallbackQueryHandler, MessageHandler, filters
 from bot.config import config
 from bot.tracker import tracker
+from bot.platforms.base import get_cookie_file
 from bot.auto_updater import (
     run_package_update,
     run_update,
@@ -631,6 +634,7 @@ async def admin_menu_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
         f"• `/stats` - Analytics & package versions\n"
         f"• `/reports` - Review user bug reports\n"
         f"• `/maintenance` - Run storage & system health audit\n"
+        f"• `/cookies` - Manage & upload cookies.txt\n"
         f"• `/upgrade_packages` - Auto-upgrade pip, yt-dlp\n"
         f"• `/restart` - Safely restart bot process"
     )
@@ -644,7 +648,10 @@ async def admin_menu_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
             InlineKeyboardButton("🔧 Maintenance Audit", callback_data="admin_action:maintenance")
         ],
         [
-            InlineKeyboardButton("📦 Upgrade Packages", callback_data="admin_action:upgrade_pkg"),
+            InlineKeyboardButton("🍪 Cookies Status", callback_data="admin_action:cookies"),
+            InlineKeyboardButton("📦 Upgrade Packages", callback_data="admin_action:upgrade_pkg")
+        ],
+        [
             InlineKeyboardButton("🔄 Restart Bot", callback_data="admin_action:restart")
         ]
     ]
@@ -654,6 +661,99 @@ async def admin_menu_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
         await update.callback_query.message.reply_text(text, reply_markup=reply_markup, parse_mode="Markdown")
     else:
         await update.message.reply_text(text, reply_markup=reply_markup, parse_mode="Markdown")
+
+
+@admin_only
+async def cookies_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Checks the status of cookies.txt and provides instructions to upload a new one."""
+    cookie_file = get_cookie_file()
+    root_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    target_path = os.path.join(root_dir, config.cookies_file or "cookies.txt")
+
+    file_exists = os.path.exists(target_path)
+    file_size = os.path.getsize(target_path) if file_exists else 0
+    mtime_str = "Never"
+    yt_count = 0
+    total_cookies = 0
+
+    if file_exists:
+        mtime = os.path.getmtime(target_path)
+        mtime_str = datetime.datetime.fromtimestamp(mtime).strftime("%Y-%m-%d %H:%M:%S")
+        try:
+            with open(target_path, "r", encoding="utf-8", errors="ignore") as f:
+                for line in f:
+                    if line.strip() and not line.startswith("#") and "\t" in line:
+                        total_cookies += 1
+                        if "youtube" in line.lower():
+                            yt_count += 1
+        except Exception:
+            pass
+
+    status_icon = "✅ Active" if cookie_file else "⚠️ Missing or Inactive"
+    text = (
+        f"🍪 <b>Cookies Status & Management</b>\n\n"
+        f"<b>Status:</b> {status_icon}\n"
+        f"<b>Path:</b> <code>{target_path}</code>\n"
+        f"<b>File Exists:</b> {'Yes' if file_exists else 'No'} ({file_size:,} bytes)\n"
+        f"<b>Last Modified:</b> {mtime_str}\n"
+        f"<b>Total Cookies:</b> {total_cookies:,}\n"
+        f"<b>YouTube Cookies:</b> {yt_count:,}\n\n"
+        f"📤 <b>How to update cookies:</b>\n"
+        f"Simply send your exported <code>cookies.txt</code> file directly as a Document/File in this chat. The bot will validate and apply it automatically without needing server access!"
+    )
+    if update.callback_query:
+        await update.callback_query.answer()
+        await update.callback_query.message.reply_text(text, parse_mode="HTML")
+    else:
+        await update.message.reply_text(text, parse_mode="HTML")
+
+
+@admin_only
+async def upload_cookies_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Allows admins to upload a new cookies.txt file directly to update YouTube/platform cookies."""
+    if not update.message or not update.message.document:
+        return
+
+    doc = update.message.document
+    filename = (doc.file_name or "").lower()
+    caption = (update.message.caption or "").lower()
+
+    if not (filename == "cookies.txt" or "cookie" in filename or "cookie" in caption):
+        return
+
+    root_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    target_path = os.path.join(root_dir, config.cookies_file or "cookies.txt")
+
+    status_msg = await update.message.reply_text("⏳ <i>Processing and validating cookies file...</i>", parse_mode="HTML")
+    try:
+        tg_file = await doc.get_file()
+        content_bytes = await tg_file.download_as_bytearray()
+        text_content = content_bytes.decode("utf-8", errors="ignore")
+
+        lines = [l for l in text_content.splitlines() if l.strip() and not l.startswith("#") and "\t" in l]
+        if len(lines) < 2:
+            await status_msg.edit_text(
+                "❌ <b>Invalid Cookie File</b>: The uploaded file does not appear to be a valid Netscape tab-separated cookies.txt file.",
+                parse_mode="HTML"
+            )
+            return
+
+        with open(target_path, "wb") as f:
+            f.write(content_bytes)
+
+        yt_cookies = sum(1 for l in lines if "youtube" in l.lower())
+        await status_msg.edit_text(
+            f"✅ <b>Cookies Successfully Updated!</b>\n\n"
+            f"• <b>Saved to:</b> <code>{target_path}</code>\n"
+            f"• <b>Total Cookies:</b> {len(lines):,}\n"
+            f"• <b>YouTube Cookies:</b> {yt_cookies:,}\n"
+            f"• <b>File Size:</b> {len(content_bytes):,} bytes\n\n"
+            f"yt-dlp will now automatically use this updated cookies file for YouTube downloads.",
+            parse_mode="HTML"
+        )
+    except Exception as e:
+        logger.error(f"Failed to save uploaded cookies file: {e}")
+        await status_msg.edit_text(f"❌ <b>Error saving cookies file:</b> {e}", parse_mode="HTML")
 
 
 async def admin_action_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -678,6 +778,9 @@ async def admin_action_callback(update: Update, context: ContextTypes.DEFAULT_TY
     elif action == "maintenance":
         await query.answer()
         await maintenance_command(update, context)
+    elif action == "cookies":
+        await query.answer()
+        await cookies_command(update, context)
     elif action == "upgrade_pkg":
         await query.answer()
         await upgrade_packages_command(update, context)
@@ -695,6 +798,8 @@ def setup_admin_handlers(app):
     app.add_handler(CallbackQueryHandler(admin_menu_command, pattern="^open_admin_panel$"))
     app.add_handler(CallbackQueryHandler(admin_action_callback, pattern=r"^admin_action:"))
     app.add_handler(CommandHandler("stats", stats_command))
+    app.add_handler(CommandHandler("cookies", cookies_command))
+    app.add_handler(CommandHandler("cookie", cookies_command))
     app.add_handler(CommandHandler("maintenance", maintenance_command))
     app.add_handler(CommandHandler("monthly_maintenance", maintenance_command))
     app.add_handler(CommandHandler("setvip", setvip_command))
@@ -716,3 +821,5 @@ def setup_admin_handlers(app):
     app.add_handler(CommandHandler("members", members_command))
     app.add_handler(CommandHandler("member", members_command))
     app.add_handler(CallbackQueryHandler(show_status_callback, pattern="^show_status$"))
+    app.add_handler(MessageHandler(filters.Document.ALL & ~filters.COMMAND, upload_cookies_document))
+

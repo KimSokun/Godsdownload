@@ -4,7 +4,7 @@ from unittest.mock import AsyncMock, patch, MagicMock
 
 from bot.platforms.base import BasePlatform
 from bot.platforms.router import detect_platform, get_platform_name, get_all_platforms
-from bot.platforms.youtube import YouTubePlatform
+from bot.platforms.youtube import YouTubePlatform, extract_youtube_id, clean_youtube_url
 from bot.platforms.tiktok import TikTokPlatform
 from bot.platforms.douyin import DouyinPlatform
 from bot.platforms.facebook import FacebookPlatform
@@ -35,6 +35,37 @@ class TestPlatformDetection(unittest.TestCase):
                 self.assertIsInstance(platform, YouTubePlatform)
                 self.assertEqual(platform.platform_id, "youtube")
                 self.assertIn("YouTube", platform.display_name)
+
+    def test_youtube_id_extraction_and_cleaning(self):
+        cases = [
+            ("https://www.youtube.com/watch?v=dQw4w9WgXcQ", "dQw4w9WgXcQ"),
+            ("https://youtube.com/watch?v=dQw4w9WgXcQ&feature=emb_title", "dQw4w9WgXcQ"),
+            ("https://www.youtube.com/watch?feature=player_embedded&v=dQw4w9WgXcQ", "dQw4w9WgXcQ"),
+            ("https://www.youtube.com/shorts/3i0hW1w6RTI", "3i0hW1w6RTI"),
+            ("https://youtube.com/shorts/3i0hW1w6RTI?feature=share", "3i0hW1w6RTI"),
+            ("https://m.youtube.com/shorts/3i0hW1w6RTI?si=xyz123", "3i0hW1w6RTI"),
+            ("https://youtu.be/dQw4w9WgXcQ", "dQw4w9WgXcQ"),
+            ("https://youtu.be/dQw4w9WgXcQ?t=120", "dQw4w9WgXcQ"),
+            ("https://www.youtube.com/embed/dQw4w9WgXcQ", "dQw4w9WgXcQ"),
+            ("https://music.youtube.com/watch?v=dQw4w9WgXcQ", "dQw4w9WgXcQ"),
+        ]
+        for url, expected_id in cases:
+            with self.subTest(url=url):
+                self.assertEqual(extract_youtube_id(url), expected_id)
+                self.assertEqual(clean_youtube_url(url), f"https://www.youtube.com/watch?v={expected_id}")
+
+    def test_youtube_bot_protection_fast_fail(self):
+        platform = YouTubePlatform()
+        from bot.downloader import DownloadResult
+
+        with patch.object(platform, "execute_ytdlp_video") as mock_exec:
+            mock_exec.return_value = DownloadResult(
+                success=False,
+                error="ERROR: [youtube] dQw4w9WgXcQ: Sign in to confirm you're not a bot."
+            )
+            res = asyncio.run(platform.download_video("https://www.youtube.com/watch?v=dQw4w9WgXcQ"))
+            self.assertFalse(res.success)
+            self.assertEqual(res.error, "YOUTUBE_BOT_PROTECTION")
 
     def test_tiktok_detection(self):
         urls = [

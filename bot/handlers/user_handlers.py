@@ -511,6 +511,15 @@ async def media_download_callback(update: Update, context: ContextTypes.DEFAULT_
             await status_msg.edit_text(too_large_msg, parse_mode="HTML")
             return
 
+        if "YOUTUBE_BOT_PROTECTION" in err_msg or "sign in to confirm you're not a bot" in err_msg.lower():
+            await status_msg.edit_text(
+                "⚠️ <b>YouTube Security Verification Required</b>\n\n"
+                "YouTube has requested bot verification for this video.\n"
+                "💡 <i>Tip: The administrator can update fresh YouTube cookies via <code>/cookies</code> or configure a proxy.</i>",
+                parse_mode="HTML"
+            )
+            return
+
         if any(k in err_msg for k in ["NOTE_NOT_FOUND", "页面不见了", "initial state", "Video unavailable", "Private video", "This video is unavailable", "not available"]):
             await status_msg.edit_text(
                 "⚠️ <b>Content Not Available</b>\n\n"

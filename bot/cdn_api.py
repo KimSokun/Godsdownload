@@ -24,7 +24,7 @@ INVIDIOUS_INSTANCES = [
 ]
 
 YOUTUBE_ID_REGEX = re.compile(
-    r'(?:v=|\/|youtu\.be\/|embed\/|shorts\/|\/v\/|watch\?v=|\&v=)([a-zA-Z0-9_-]{11})'
+    r'(?:(?:v|vi|embed|shorts)\/|\/(?:v|vi|embed|shorts)\/|(?:watch\?v=)|(?:watch\?.+&v=)|(?:youtu\.be\/)|(?:\/e\/))([a-zA-Z0-9_-]{11})'
 )
 TIKTOK_REGEX = re.compile(r'(tiktok\.com|douyin\.com)')
 
