@@ -37,35 +37,46 @@ def extract_youtube_id(url: str) -> Optional[str]:
     return match.group(1) if match else None
 
 
-async def expand_redirect_url(url: str, timeout: float = 4.0) -> str:
+async def expand_redirect_url(url: str, timeout: float = 5.0) -> str:
     """
     Follows HTTP redirects (301/302) to resolve short links
-    (e.g., vt.tiktok.com, xhslink.com, v.kuaishou.com, pin.it, fb.watch, t.co, youtu.be, bit.ly)
+    (e.g., vt.tiktok.com, xhslink.com, v.kuaishou.com, pin.it, fb.watch, facebook.com/share/, t.co, youtu.be, bit.ly)
     to their full canonical destination URL.
     """
     if not url or not url.startswith("http"):
         return url
 
+    # Skip expanding direct media file assets (prevents turning direct images into viewer pages)
+    path = url.split("?")[0].lower()
+    if path.endswith((".jpg", ".jpeg", ".png", ".webp", ".gif", ".mp4", ".mp3", ".m4a", ".webm")):
+        return url
+
     headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
     }
 
     try:
         async with aiohttp.ClientSession() as session:
-            async with session.head(url, headers=headers, allow_redirects=True, timeout=aiohttp.ClientTimeout(total=timeout)) as resp:
-                if resp.status < 400 and str(resp.url) != url:
-                    logger.info(f"🔗 Expanded redirect {url} -> {resp.url}")
-                    return str(resp.url)
-    except Exception:
-        # Fallback to GET if HEAD method is disallowed by server
-        try:
-            async with aiohttp.ClientSession() as session:
-                async with session.get(url, headers=headers, allow_redirects=True, timeout=aiohttp.ClientTimeout(total=timeout)) as resp:
+            # 1. Try HEAD first
+            try:
+                async with session.head(url, headers=headers, allow_redirects=True, timeout=aiohttp.ClientTimeout(total=timeout)) as resp:
                     if resp.status < 400 and str(resp.url) != url:
                         logger.info(f"🔗 Expanded redirect {url} -> {resp.url}")
                         return str(resp.url)
-        except Exception:
-            pass
+            except Exception:
+                pass
+
+            # 2. Try GET if HEAD returned >= 400 or failed (Facebook often returns 400 to HEAD requests)
+            try:
+                async with session.get(url, headers=headers, allow_redirects=True, timeout=aiohttp.ClientTimeout(total=timeout)) as resp:
+                    if str(resp.url) != url:
+                        logger.info(f"🔗 Expanded redirect via GET {url} -> {resp.url}")
+                        return str(resp.url)
+            except Exception:
+                pass
+    except Exception as e:
+        logger.debug(f"expand_redirect_url failed for {url}: {e}")
 
     return url
 

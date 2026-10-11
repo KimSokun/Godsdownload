@@ -804,6 +804,78 @@ class TestMediaCacheAndMaintenance(unittest.TestCase):
         self.assertIn("remaining_temp_files", res)
 
 
+class TestFacebookPlatformDetailed(unittest.TestCase):
+    """Verifies Facebook video, reel, story, and photo album handling."""
+
+    def setUp(self):
+        self.platform = FacebookPlatform()
+
+    def test_fb_url_normalization(self):
+        # 1. Reel
+        norm_reel = FacebookPlatform.normalize_fb_url("https://www.facebook.com/reel/1195289147628387")
+        self.assertEqual(norm_reel, "https://www.facebook.com/video.php?v=1195289147628387")
+
+        # 2. Watch
+        norm_watch = FacebookPlatform.normalize_fb_url("https://www.facebook.com/watch/?v=987654321")
+        self.assertEqual(norm_watch, "https://www.facebook.com/video.php?v=987654321")
+
+        # 3. User videos
+        norm_uvid = FacebookPlatform.normalize_fb_url("https://www.facebook.com/NASA/videos/10154383743583686/")
+        self.assertEqual(norm_uvid, "https://www.facebook.com/video.php?v=10154383743583686")
+
+        # 4. Gaming / fb.gg
+        norm_gg = FacebookPlatform.normalize_fb_url("https://fb.gg/v/1234567")
+        self.assertEqual(norm_gg, "https://www.facebook.com/video.php?v=1234567")
+
+    def test_fb_pattern_detection(self):
+        urls = [
+            "https://fb.com/reel/123456",
+            "https://m.facebook.com/reel/123456",
+            "https://mbasic.facebook.com/photo.php?fbid=123",
+            "https://touch.facebook.com/story.php?story_fbid=123",
+            "https://web.facebook.com/share/r/abc12345/",
+            "https://www.facebook.com/share/p/xyz98765/",
+        ]
+        for u in urls:
+            with self.subTest(url=u):
+                self.assertTrue(self.platform.can_handle(u))
+
+    def test_fb_fast_scan_photos(self):
+        async def _run():
+            mock_media = {
+                "title": "Facebook Nature Album",
+                "uploader": "Nature Page",
+                "video_url": None,
+                "photos": [
+                    "https://scontent.xx.fbcdn.net/v/t39.30808-6/1.jpg",
+                    "https://scontent.xx.fbcdn.net/v/t39.30808-6/2.jpg",
+                ],
+                "thumbnail_url": "https://scontent.xx.fbcdn.net/v/t39.30808-6/1.jpg",
+            }
+            with patch.object(self.platform, '_extract_facebook_media', new_callable=AsyncMock) as mock_ext:
+                mock_ext.return_value = mock_media
+                scan = await self.platform.fast_scan("https://www.facebook.com/photo.php?fbid=123456")
+                self.assertIsNotNone(scan)
+                self.assertEqual(scan["type"], "images")
+                self.assertEqual(len(scan["image_urls"]), 2)
+                self.assertEqual(scan["title"], "Facebook Nature Album")
+
+                # Test download_images
+                res = await self.platform.download_images("https://www.facebook.com/photo.php?fbid=123456")
+                self.assertTrue(res.success)
+                self.assertTrue(res.is_image)
+                self.assertEqual(len(res.image_urls), 2)
+        asyncio.run(_run())
+
+    def test_fb_fast_scan_video(self):
+        async def _run():
+            scan = await self.platform.fast_scan("https://www.facebook.com/reel/123456789")
+            self.assertIsNotNone(scan)
+            self.assertEqual(scan["type"], "video")
+            self.assertEqual(scan["platform_id"], "facebook")
+        asyncio.run(_run())
+
+
 if __name__ == "__main__":
     unittest.main()
 

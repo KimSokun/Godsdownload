@@ -26,3 +26,8 @@ venv/
 *.bat
 *.cmd
 
+# Internal documentation / control files
+controller.md
+controll.md
+control*.md
+
