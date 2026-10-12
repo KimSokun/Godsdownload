@@ -13,6 +13,7 @@ logger = logging.getLogger(__name__)
 
 # Fast Public Direct CDN Mirrors
 COBALT_INSTANCES = [
+    "https://api.cobalt.liubquanti.click",
     "https://api.cobalt.tools",
     "https://cobalt.api.scot",
 ]

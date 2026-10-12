@@ -58,7 +58,8 @@ class TestPlatformDetection(unittest.TestCase):
         platform = YouTubePlatform()
         from bot.downloader import DownloadResult
 
-        with patch.object(platform, "execute_ytdlp_video") as mock_exec:
+        with patch("bot.platforms.youtube.fetch_cobalt_mirror", return_value=None), \
+             patch.object(platform, "execute_ytdlp_video") as mock_exec:
             mock_exec.return_value = DownloadResult(
                 success=False,
                 error="ERROR: [youtube] dQw4w9WgXcQ: Sign in to confirm you're not a bot."
@@ -66,6 +67,26 @@ class TestPlatformDetection(unittest.TestCase):
             res = asyncio.run(platform.download_video("https://www.youtube.com/watch?v=dQw4w9WgXcQ"))
             self.assertFalse(res.success)
             self.assertEqual(res.error, "YOUTUBE_BOT_PROTECTION")
+
+    def test_youtube_cobalt_direct_cdn_success(self):
+        platform = YouTubePlatform()
+        from bot.downloader import DownloadResult
+
+        mock_cdn_info = {
+            "success": True,
+            "title": "Sample YouTube Video",
+            "uploader": "Test Channel",
+            "duration": 60,
+            "video_url": "https://api.cobalt.liubquanti.click/tunnel/test",
+            "thumbnail_url": "https://api.cobalt.liubquanti.click/thumb/test.jpg"
+        }
+        with patch("bot.platforms.youtube.fetch_cobalt_mirror", return_value=mock_cdn_info), \
+             patch("bot.platforms.youtube.download_direct_cdn_stream", return_value=(True, 10485760, 10.0, None)), \
+             patch("bot.platforms.youtube.download_thumbnail", return_value="/tmp/test.jpg"):
+            res = asyncio.run(platform.download_video("https://www.youtube.com/watch?v=dQw4w9WgXcQ"))
+            self.assertTrue(res.success)
+            self.assertEqual(res.title, "Sample YouTube Video")
+            self.assertEqual(res.filesize_mb, 10.0)
 
     def test_tiktok_detection(self):
         urls = [

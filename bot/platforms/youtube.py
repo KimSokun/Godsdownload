@@ -15,6 +15,7 @@ from bot.platforms.base import (
     cleanup_files,
     TELEGRAM_FILE_LIMIT_BYTES,
 )
+from bot.cdn_api import fetch_cobalt_mirror, download_direct_cdn_stream
 
 logger = logging.getLogger(__name__)
 
@@ -113,9 +114,51 @@ class YouTubePlatform(BasePlatform):
         output_base = os.path.join(config.temp_dir, file_id)
         loop = asyncio.get_running_loop()
 
+        # Step 1: Open-Source High-Speed Direct CDN Resolver (Zero Cookies, Bypasses Bot Protection)
+        try:
+            cdn_info = await fetch_cobalt_mirror(clean_url, is_audio=False, timeout=6.0)
+            if cdn_info and cdn_info.get("video_url"):
+                cdn_url = cdn_info["video_url"]
+                output_video = f"{output_base}.mp4"
+                output_thumb = f"{output_base}.jpg"
+                ok, total_bytes, filesize_mb, err = await download_direct_cdn_stream(
+                    cdn_url, output_video, max_size_mb, max_retries=2
+                )
+                if ok:
+                    thumb_path = await download_thumbnail(cdn_info.get("thumbnail_url"), output_thumb)
+                    logger.info(f"✅ YouTube Direct CDN succeeded for {clean_url}: {filesize_mb} MB")
+                    return DownloadResult(
+                        success=True,
+                        filepath=output_video,
+                        filename=f"{file_id}.mp4",
+                        filesize_bytes=total_bytes,
+                        filesize_mb=filesize_mb,
+                        title=cdn_info.get("title", "YouTube Video"),
+                        uploader=cdn_info.get("uploader", "YouTube Creator"),
+                        duration=cdn_info.get("duration", 0),
+                        thumbnail_path=thumb_path,
+                        is_over_50mb=(total_bytes > TELEGRAM_FILE_LIMIT_BYTES),
+                        is_audio=False,
+                        direct_url=cdn_url,
+                    )
+                elif err and "FILE_TOO_LARGE" in err:
+                    return DownloadResult(
+                        success=True,
+                        is_over_50mb=True,
+                        direct_url=cdn_url,
+                        title=cdn_info.get("title", "YouTube Video"),
+                        uploader=cdn_info.get("uploader", "YouTube Creator"),
+                        filesize_mb=filesize_mb,
+                        duration=cdn_info.get("duration", 0),
+                        thumbnail_path=cdn_info.get("thumbnail_url"),
+                        is_audio=False,
+                    )
+        except Exception as e:
+            logger.debug(f"Direct CDN attempt for YouTube failed ({e}), falling back to yt-dlp...")
+
         configured_proxy = get_youtube_proxy()
 
-        # Step 1: Download attempt (using configured proxy/WARP if present, else direct)
+        # Step 2: yt-dlp download attempt (using configured proxy/WARP if present, else direct)
         first_proxy = configured_proxy if configured_proxy else None
         first_opts = self._get_youtube_ydl_opts(is_audio=False, download_path_template=output_base, proxy=first_proxy)
         res = await loop.run_in_executor(None, self.execute_ytdlp_video, clean_url, output_base, max_size_mb, first_opts)
@@ -124,7 +167,7 @@ class YouTubePlatform(BasePlatform):
 
         err_msg = str(getattr(res, "error", "")).lower()
 
-        # Step 2: Fallback attempt if first attempt failed
+        # Step 3: yt-dlp Fallback attempt if first attempt failed
         fallback_proxy = None if first_proxy else configured_proxy
         if fallback_proxy is not None or (first_proxy and not res.success):
             logger.info(f"Primary YouTube download attempt failed ({err_msg}). Trying fallback...")
@@ -134,7 +177,7 @@ class YouTubePlatform(BasePlatform):
                 return fallback_res
             err_msg = str(getattr(fallback_res, "error", "")).lower()
 
-        # Step 3: Fast-fail without freezing if bot protection requires cookies/login
+        # Step 4: Fast-fail without freezing if bot protection requires cookies/login
         if any(k in err_msg for k in ["sign in to confirm you're not a bot", "sign in", "login_required", "bot"]):
             return DownloadResult(
                 success=False,
@@ -151,9 +194,39 @@ class YouTubePlatform(BasePlatform):
         output_base = os.path.join(config.temp_dir, file_id)
         loop = asyncio.get_running_loop()
 
+        # Step 1: Open-Source High-Speed Direct CDN Resolver (Zero Cookies, Bypasses Bot Protection)
+        try:
+            cdn_info = await fetch_cobalt_mirror(clean_url, is_audio=True, timeout=6.0)
+            if cdn_info and cdn_info.get("audio_url"):
+                cdn_url = cdn_info["audio_url"]
+                output_audio = f"{output_base}.mp3"
+                output_thumb = f"{output_base}.jpg"
+                ok, total_bytes, filesize_mb, err = await download_direct_cdn_stream(
+                    cdn_url, output_audio, max_size_mb, max_retries=2
+                )
+                if ok:
+                    thumb_path = await download_thumbnail(cdn_info.get("thumbnail_url"), output_thumb)
+                    logger.info(f"✅ YouTube Direct CDN audio succeeded for {clean_url}: {filesize_mb} MB")
+                    return DownloadResult(
+                        success=True,
+                        filepath=output_audio,
+                        filename=f"{file_id}.mp3",
+                        filesize_bytes=total_bytes,
+                        filesize_mb=filesize_mb,
+                        title=cdn_info.get("title", "YouTube Audio"),
+                        uploader=cdn_info.get("uploader", "YouTube Creator"),
+                        duration=cdn_info.get("duration", 0),
+                        thumbnail_path=thumb_path,
+                        is_over_50mb=(total_bytes > TELEGRAM_FILE_LIMIT_BYTES),
+                        is_audio=True,
+                        direct_url=cdn_url,
+                    )
+        except Exception as e:
+            logger.debug(f"Direct CDN audio attempt for YouTube failed ({e}), falling back to yt-dlp...")
+
         configured_proxy = get_youtube_proxy()
 
-        # Step 1: Download attempt (using configured proxy/WARP if present, else direct)
+        # Step 2: yt-dlp download attempt (using configured proxy/WARP if present, else direct)
         first_proxy = configured_proxy if configured_proxy else None
         first_opts = self._get_youtube_ydl_opts(is_audio=True, download_path_template=output_base, proxy=first_proxy)
         res = await loop.run_in_executor(None, self.execute_ytdlp_audio, clean_url, output_base, max_size_mb, first_opts)
@@ -162,7 +235,7 @@ class YouTubePlatform(BasePlatform):
 
         err_msg = str(getattr(res, "error", "")).lower()
 
-        # Step 2: Fallback attempt if first attempt failed
+        # Step 3: yt-dlp Fallback attempt if first attempt failed
         fallback_proxy = None if first_proxy else configured_proxy
         if fallback_proxy is not None or (first_proxy and not res.success):
             logger.info(f"Primary YouTube audio download attempt failed ({err_msg}). Trying fallback...")
@@ -172,7 +245,7 @@ class YouTubePlatform(BasePlatform):
                 return fallback_res
             err_msg = str(getattr(fallback_res, "error", "")).lower()
 
-        # Step 3: Fast-fail without freezing if bot protection requires cookies/login
+        # Step 4: Fast-fail without freezing if bot protection requires cookies/login
         if any(k in err_msg for k in ["sign in to confirm you're not a bot", "sign in", "login_required", "bot"]):
             return DownloadResult(
                 success=False,
