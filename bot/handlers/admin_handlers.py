@@ -516,6 +516,7 @@ async def reports_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def show_owner_reports_dashboard(update: Update, context: ContextTypes.DEFAULT_TYPE, is_callback: bool = False):
     """Displays interactive Owner Report Control Dashboard with one-click action buttons."""
+    import html
     recent = tracker.get_reports(limit=6)
     total = len(tracker.reports)
     pending = [r for r in tracker.reports if not r.get("resolved")]
@@ -523,36 +524,43 @@ async def show_owner_reports_dashboard(update: Update, context: ContextTypes.DEF
 
     if not recent:
         empty_text = (
-            "👑 **Owner Report Control Dashboard**\n"
+            "👑 <b>Owner Report Control Dashboard</b>\n"
             "━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
             "📋 No problem reports have been submitted yet. Everything is running smoothly! ✅"
         )
         if is_callback and update.callback_query:
-            await update.callback_query.edit_message_text(empty_text, parse_mode="Markdown")
+            await update.callback_query.edit_message_text(empty_text, parse_mode="HTML")
         else:
-            await update.effective_message.reply_text(empty_text, parse_mode="Markdown")
+            await update.effective_message.reply_text(empty_text, parse_mode="HTML")
         return
 
     lines = [
-        "👑 **Owner Report Control Dashboard**",
+        "👑 <b>Owner Report Control Dashboard</b>",
         "━━━━━━━━━━━━━━━━━━━━━━━━━━",
-        f"📊 **Total:** `{total}` | 🚨 **Pending:** `{len(pending)}` | ✅ **Fixed:** `{len(fixed)}`\n"
+        f"📊 <b>Total:</b> <code>{total}</code> | 🚨 <b>Pending:</b> <code>{len(pending)}</code> | ✅ <b>Fixed:</b> <code>{len(fixed)}</code>\n"
     ]
 
     keyboard = []
     for r in recent:
         rid = r.get("id")
         status_icon = "✅ Fixed" if r.get("resolved") else "🚨 Pending"
+        first_name = html.escape(str(r.get("first_name") or "User"))
+        raw_username = str(r.get("username") or "NoUsername")
+        username_esc = html.escape(raw_username)
+        user_id = r.get("user_id")
+        created_at = html.escape(str(r.get("created_at") or ""))
+        report_text = html.escape(str(r.get("text") or ""))
+
         lines.append(
-            f"• **Report #{rid}** ({status_icon})\n"
-            f"  👤 {r.get('first_name')} ({r.get('username')}) (`{r.get('user_id')}`)\n"
-            f"  📅 `{r.get('created_at')}`\n"
-            f"  💬 \"{r.get('text')}\"\n"
+            f"• <b>Report #{rid}</b> ({status_icon})\n"
+            f"  👤 {first_name} ({username_esc}) (<code>{user_id}</code>)\n"
+            f"  📅 <code>{created_at}</code>\n"
+            f"  💬 <i>\"{report_text}\"</i>\n"
         )
         # For pending reports, provide quick action buttons directly in Telegram
         if not r.get("resolved"):
             uid = r.get("user_id")
-            uname = r.get("username", "").lstrip("@")
+            uname = raw_username.lstrip("@")
             chat_url = f"https://t.me/{uname}" if uname and uname != "NoUsername" else f"tg://user?id={uid}"
             keyboard.append([
                 InlineKeyboardButton(f"✅ 30D VIP #{rid}", callback_data=f"approve_vip:{uid}:report"),
@@ -568,10 +576,32 @@ async def show_owner_reports_dashboard(update: Update, context: ContextTypes.DEF
     text = "\n".join(lines)
     reply_markup = InlineKeyboardMarkup(keyboard)
 
-    if is_callback and update.callback_query:
-        await update.callback_query.edit_message_text(text, reply_markup=reply_markup, parse_mode="Markdown")
-    else:
-        await update.effective_message.reply_text(text, reply_markup=reply_markup, parse_mode="Markdown")
+    try:
+        if is_callback and update.callback_query:
+            await update.callback_query.edit_message_text(text, reply_markup=reply_markup, parse_mode="HTML")
+        else:
+            await update.effective_message.reply_text(text, reply_markup=reply_markup, parse_mode="HTML")
+    except Exception as e:
+        logger.warning(f"Failed to send HTML formatted reports dashboard ({e}), sending plain text fallback...")
+        plain_lines = [
+            "👑 Owner Report Control Dashboard",
+            "━━━━━━━━━━━━━━━━━━━━━━━━━━",
+            f"📊 Total: {total} | 🚨 Pending: {len(pending)} | ✅ Fixed: {len(fixed)}\n"
+        ]
+        for r in recent:
+            rid = r.get("id")
+            status_icon = "✅ Fixed" if r.get("resolved") else "🚨 Pending"
+            plain_lines.append(
+                f"• Report #{rid} ({status_icon})\n"
+                f"  👤 {r.get('first_name')} ({r.get('username')}) ({r.get('user_id')})\n"
+                f"  📅 {r.get('created_at')}\n"
+                f"  💬 \"{r.get('text')}\"\n"
+            )
+        plain_text = "\n".join(plain_lines)
+        if is_callback and update.callback_query:
+            await update.callback_query.edit_message_text(plain_text, reply_markup=reply_markup)
+        else:
+            await update.effective_message.reply_text(plain_text, reply_markup=reply_markup)
 
 
 async def mark_fixed_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -594,10 +624,10 @@ async def mark_fixed_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
             try:
                 await context.bot.send_message(
                     chat_id=target_uid,
-                    text=f"🎉 **Great News! Your Reported Issue #{report_id} Has Been Fixed!**\n\n"
+                    text=f"🎉 <b>Great News! Your Reported Issue #{report_id} Has Been Fixed!</b>\n\n"
                          "The bot owner has resolved the issue. Thank you for helping improve Godsdownload!\n\n"
                          "Feel free to send your video link again.",
-                    parse_mode="Markdown"
+                    parse_mode="HTML"
                 )
             except Exception as e:
                 logger.debug(f"Could not notify user of fixed report: {e}")
