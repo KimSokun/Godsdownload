@@ -82,11 +82,19 @@ async def expand_redirect_url(url: str, timeout: float = 5.0) -> str:
     return url
 
 
-async def fetch_cobalt_mirror(url: str, is_audio: bool = False, timeout: float = 4.0) -> Optional[Dict[str, Any]]:
+async def fetch_cobalt_mirror(
+    url: str,
+    is_audio: bool = False,
+    timeout: float = 12.0,
+    proxy: Optional[str] = None
+) -> Optional[Dict[str, Any]]:
     """
     Resolves media directly via Cobalt API instances.
     Provides ultra-fast CDN downloads for Instagram, Twitter/X, Reddit, TikTok, Facebook, Pinterest, and YouTube.
     """
+    import json
+    import shutil
+
     headers = {
         "Accept": "application/json",
         "Content-Type": "application/json",
@@ -100,6 +108,50 @@ async def fetch_cobalt_mirror(url: str, is_audio: bool = False, timeout: float =
         "audioFormat": "mp3",
         "youtubeVideoCodec": "h264",
     }
+
+    # Step 1: Proxy-accelerated curl (bypasses IP rate limits and GVS challenges)
+    if proxy and shutil.which("curl"):
+        try:
+            curl_cmd = [
+                "curl", "-s",
+                "--connect-timeout", "10",
+                "--max-time", str(int(timeout)),
+                "-X", "POST", "https://api.cobalt.liubquanti.click",
+                "-H", "Accept: application/json",
+                "-H", "Content-Type: application/json",
+                "-H", "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+                "-d", json.dumps(payload),
+            ]
+            if "socks5" in proxy:
+                curl_cmd.extend(["--socks5-hostname", proxy.split("://")[-1]])
+            else:
+                curl_cmd.extend(["--proxy", proxy])
+            proc = await asyncio.create_subprocess_exec(
+                *curl_cmd,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE
+            )
+            stdout_data, _ = await asyncio.wait_for(proc.communicate(), timeout=timeout + 2)
+            if stdout_data:
+                data = json.loads(stdout_data.decode("utf-8", errors="replace"))
+                status = data.get("status")
+                media_url = data.get("url") if status in ("tunnel", "redirect") else None
+                if media_url:
+                    logger.info(f"✅ Cobalt mirror via proxy curl succeeded for {url}")
+                    filename = data.get("filename") or ("Audio" if is_audio else "Video")
+                    return {
+                        "success": True,
+                        "source": "Cobalt CDN (Proxy)",
+                        "title": filename,
+                        "uploader": "Direct CDN",
+                        "duration": 0,
+                        "video_url": None if is_audio else media_url,
+                        "audio_url": media_url if is_audio else None,
+                        "thumbnail_url": data.get("thumb"),
+                        "image_urls": [],
+                    }
+        except Exception as e:
+            logger.debug(f"Cobalt proxy query failed ({e}), falling back to direct aiohttp instances...")
 
     for instance in COBALT_INSTANCES:
         api_endpoint = instance.rstrip("/")
@@ -322,7 +374,8 @@ async def download_direct_cdn_stream(
     output_filepath: str,
     max_size_mb: float = 2000.0,
     max_retries: int = 3,
-    headers: Optional[Dict[str, str]] = None
+    headers: Optional[Dict[str, str]] = None,
+    proxy: Optional[str] = None
 ) -> Tuple[bool, int, float, Optional[str]]:
     """
     Auto-Retry streaming download directly from high-speed CDN.
@@ -340,8 +393,57 @@ async def download_direct_cdn_stream(
             cdn_url = cdn_url.replace(akam, "upos-sz-upcdnbda2.bilivideo.com")
             break
 
-    # 1. High-Speed Acceleration: aria2c (16 parallel connections)
+    # 1. Proxy-Accelerated curl download (bypasses CDN rate limiting on datacenter IPs)
     import shutil
+    curl_exe = shutil.which("curl")
+    if proxy and curl_exe:
+        out_dir = os.path.dirname(os.path.abspath(output_filepath))
+        os.makedirs(out_dir, exist_ok=True)
+        curl_cmd = [
+            curl_exe, "-s", "-L",
+            "--connect-timeout", "10",
+            "--max-time", "180",
+            "-o", output_filepath,
+        ]
+        if "socks5" in proxy:
+            curl_cmd.extend(["--socks5-hostname", proxy.split("://")[-1]])
+        else:
+            curl_cmd.extend(["--proxy", proxy])
+        for k, v in req_headers.items():
+            curl_cmd.extend(["-H", f"{k}: {v}"])
+        curl_cmd.append(cdn_url)
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                *curl_cmd,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE
+            )
+            await asyncio.wait_for(proc.communicate(), timeout=190)
+            if proc.returncode == 0 and os.path.exists(output_filepath):
+                actual_bytes = os.path.getsize(output_filepath)
+                if actual_bytes < 2048:
+                    with open(output_filepath, "rb") as f:
+                        peek = f.read(100)
+                        if b"error" in peek or b"too_many_requests" in peek:
+                            try:
+                                os.remove(output_filepath)
+                            except Exception:
+                                pass
+                            actual_bytes = 0
+                if actual_bytes > 0:
+                    actual_mb = round(actual_bytes / (1024 * 1024), 2)
+                    if actual_mb > max_size_mb:
+                        try:
+                            os.remove(output_filepath)
+                        except Exception:
+                            pass
+                        return False, 0, 0.0, f"FILE_TOO_LARGE:{actual_mb}:{max_size_mb}"
+                    logger.info(f"✅ curl proxy stream download succeeded: {actual_mb} MB")
+                    return True, actual_bytes, actual_mb, None
+        except Exception as e:
+            logger.debug(f"curl proxy stream download failed ({e}), falling back to aria2c/aiohttp...")
+
+    # 2. High-Speed Acceleration: aria2c (4 parallel connections to prevent 429)
     aria2_exe = shutil.which("aria2c")
     if aria2_exe:
         out_dir = os.path.dirname(os.path.abspath(output_filepath))
@@ -349,24 +451,26 @@ async def download_direct_cdn_stream(
         os.makedirs(out_dir, exist_ok=True)
         cmd = [
             aria2_exe,
-            "-x", "16",
-            "-s", "16",
-            "-j", "16",
+            "-x", "4",
+            "-s", "4",
+            "-j", "4",
             "-k", "1M",
-            "--split=16",
+            "--split=4",
             "--min-split-size=1M",
-            "--max-connection-per-server=16",
+            "--max-connection-per-server=4",
             "--file-allocation=none",
             "--summary-interval=0",
             "--allow-overwrite=true",
             "--auto-file-renaming=false",
-            "--connect-timeout=10",
+            "--connect-timeout", "10",
             "--timeout=30",
             "--max-tries=3",
             "--retry-wait=1",
             "-d", out_dir,
             "-o", out_file,
         ]
+        if proxy:
+            cmd.extend(["--all-proxy", proxy])
         for k, v in req_headers.items():
             cmd.extend(["--header", f"{k}: {v}"])
         cmd.append(cdn_url)

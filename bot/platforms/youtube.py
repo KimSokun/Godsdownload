@@ -113,16 +113,17 @@ class YouTubePlatform(BasePlatform):
         file_id = uuid.uuid4().hex
         output_base = os.path.join(config.temp_dir, file_id)
         loop = asyncio.get_running_loop()
+        configured_proxy = get_youtube_proxy()
 
         # Step 1: Open-Source High-Speed Direct CDN Resolver (Zero Cookies, Bypasses Bot Protection)
         try:
-            cdn_info = await fetch_cobalt_mirror(clean_url, is_audio=False, timeout=12.0)
+            cdn_info = await fetch_cobalt_mirror(clean_url, is_audio=False, timeout=12.0, proxy=configured_proxy)
             if cdn_info and cdn_info.get("video_url"):
                 cdn_url = cdn_info["video_url"]
                 output_video = f"{output_base}.mp4"
                 output_thumb = f"{output_base}.jpg"
                 ok, total_bytes, filesize_mb, err = await download_direct_cdn_stream(
-                    cdn_url, output_video, max_size_mb, max_retries=2
+                    cdn_url, output_video, max_size_mb, max_retries=2, proxy=configured_proxy
                 )
                 if ok:
                     thumb_path = await download_thumbnail(cdn_info.get("thumbnail_url"), output_thumb)
@@ -155,8 +156,6 @@ class YouTubePlatform(BasePlatform):
                     )
         except Exception as e:
             logger.debug(f"Direct CDN attempt for YouTube failed ({e}), falling back to yt-dlp...")
-
-        configured_proxy = get_youtube_proxy()
 
         # Step 2: yt-dlp download attempt (using configured proxy/WARP if present, else direct)
         first_proxy = configured_proxy if configured_proxy else None
@@ -193,16 +192,17 @@ class YouTubePlatform(BasePlatform):
         file_id = uuid.uuid4().hex
         output_base = os.path.join(config.temp_dir, file_id)
         loop = asyncio.get_running_loop()
+        configured_proxy = get_youtube_proxy()
 
         # Step 1: Open-Source High-Speed Direct CDN Resolver (Zero Cookies, Bypasses Bot Protection)
         try:
-            cdn_info = await fetch_cobalt_mirror(clean_url, is_audio=True, timeout=12.0)
+            cdn_info = await fetch_cobalt_mirror(clean_url, is_audio=True, timeout=12.0, proxy=configured_proxy)
             if cdn_info and cdn_info.get("audio_url"):
                 cdn_url = cdn_info["audio_url"]
                 output_audio = f"{output_base}.mp3"
                 output_thumb = f"{output_base}.jpg"
                 ok, total_bytes, filesize_mb, err = await download_direct_cdn_stream(
-                    cdn_url, output_audio, max_size_mb, max_retries=2
+                    cdn_url, output_audio, max_size_mb, max_retries=2, proxy=configured_proxy
                 )
                 if ok:
                     thumb_path = await download_thumbnail(cdn_info.get("thumbnail_url"), output_thumb)
@@ -223,8 +223,6 @@ class YouTubePlatform(BasePlatform):
                     )
         except Exception as e:
             logger.debug(f"Direct CDN audio attempt for YouTube failed ({e}), falling back to yt-dlp...")
-
-        configured_proxy = get_youtube_proxy()
 
         # Step 2: yt-dlp download attempt (using configured proxy/WARP if present, else direct)
         first_proxy = configured_proxy if configured_proxy else None
