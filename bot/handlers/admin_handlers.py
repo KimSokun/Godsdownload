@@ -16,6 +16,15 @@ from bot.auto_updater import (
 logger = logging.getLogger(__name__)
 
 
+def _get_target_message(update: Update):
+    """Returns the message to reply to, supporting both regular commands and callback queries."""
+    if getattr(update, "message", None) is not None:
+        return update.message
+    if getattr(update, "callback_query", None) and getattr(update.callback_query, "message", None):
+        return update.callback_query.message
+    return getattr(update, "effective_message", None)
+
+
 def admin_only(func):
     """Decorator to ensure only bot admins can run administrative commands."""
     async def wrapper(update: Update, context: ContextTypes.DEFAULT_TYPE, *args, **kwargs):
@@ -66,7 +75,8 @@ async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"{version_lines}\n\n"
         f"💡 _Tip: Use /upgrade_packages to automatically update all packages._"
     )
-    await update.message.reply_text(text, parse_mode="Markdown")
+    msg = _get_target_message(update)
+    await msg.reply_text(text, parse_mode="Markdown")
 
 
 @owner_only
@@ -245,7 +255,8 @@ async def upgrade_packages_command(update: Update, context: ContextTypes.DEFAULT
     """
     target_pkg = context.args[0] if context.args else None
     target_label = f"`{target_pkg}`" if target_pkg else "all packages (`pip`, `yt-dlp`, `requirements.txt`)"
-    status_msg = await update.message.reply_text(
+    msg = _get_target_message(update)
+    status_msg = await msg.reply_text(
         f"⏳ **Upgrading {target_label}...**\nRunning background pip upgrade, please wait...",
         parse_mode="Markdown"
     )
@@ -292,7 +303,8 @@ async def show_status_callback(update: Update, context: ContextTypes.DEFAULT_TYP
 async def restart_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Triggers an immediate graceful restart of the bot."""
     from bot.code_watcher import restart_bot
-    await update.message.reply_text(
+    msg = _get_target_message(update)
+    await msg.reply_text(
         "🔄 **Restarting Godsdownload Bot...**\nPlease wait 3-5 seconds for the bot to reload.",
         parse_mode="Markdown"
     )
@@ -369,7 +381,8 @@ async def diag_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"```\n{recent_errors[:500]}\n```\n\n"
         "💡 _To install FFmpeg on Linux: `apt-get update && apt-get install -y ffmpeg`_"
     )
-    await update.message.reply_text(text, parse_mode="Markdown")
+    msg = _get_target_message(update)
+    await msg.reply_text(text, parse_mode="Markdown")
 
 
 @owner_only
@@ -438,7 +451,8 @@ async def members_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"📁 Sending `{label}`...\n"
         "💡 _Tip: Run `/members png` to receive a visual PNG dashboard card!_"
     )
-    await update.message.reply_text(text, parse_mode="Markdown")
+    msg = _get_target_message(update)
+    await msg.reply_text(text, parse_mode="Markdown")
 
     if os.path.exists(target_file):
         try:
@@ -603,7 +617,8 @@ async def export_reports_doc_callback(update: Update, context: ContextTypes.DEFA
 @admin_only
 async def maintenance_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Runs full monthly maintenance & system audit and outputs report."""
-    status_msg = await update.message.reply_text("🔧 *Running Monthly Maintenance & Health Audit...*", parse_mode="Markdown")
+    msg = _get_target_message(update)
+    status_msg = await msg.reply_text("🔧 *Running Monthly Maintenance & Health Audit...*", parse_mode="Markdown")
     from bot.maintenance import run_monthly_maintenance
     try:
         report_data, summary = await run_monthly_maintenance()
@@ -623,20 +638,20 @@ async def admin_menu_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
     stats = tracker.get_stats()
     user = update.effective_user
     text = (
-        f"👑 **Godsdownload Admin Dashboard**\n"
+        f"👑 <b>Godsdownload Admin Dashboard</b>\n"
         f"━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        f"👤 **Admin:** {user.first_name} (`{user.id}`)\n"
-        f"👥 **Total Registered Users:** `{stats.get('total_users', 0):,}`\n"
-        f"💎 **Active VIP Members:** `{stats.get('total_vips', 0)}`\n"
-        f"📥 **Total Downloads Processed:** `{stats.get('total_downloads', 0):,}`\n\n"
-        f"⚡ **Quick Controls:**\n"
-        f"• `/setvip <user_id> [days]` - Grant VIP access\n"
-        f"• `/stats` - Analytics & package versions\n"
-        f"• `/reports` - Review user bug reports\n"
-        f"• `/maintenance` - Run storage & system health audit\n"
-        f"• `/cookies` - Manage & upload cookies.txt\n"
-        f"• `/upgrade_packages` - Auto-upgrade pip, yt-dlp\n"
-        f"• `/restart` - Safely restart bot process"
+        f"👤 <b>Admin:</b> {user.first_name} (<code>{user.id}</code>)\n"
+        f"👥 <b>Total Registered Users:</b> <code>{stats.get('total_users', 0):,}</code>\n"
+        f"💎 <b>Active VIP Members:</b> <code>{stats.get('total_vips', 0)}</code>\n"
+        f"📥 <b>Total Downloads Processed:</b> <code>{stats.get('total_downloads', 0):,}</code>\n\n"
+        f"⚡ <b>Quick Controls:</b>\n"
+        f"• <code>/setvip &lt;user_id&gt; [days]</code> - Grant VIP access\n"
+        f"• <code>/stats</code> - Analytics & package versions\n"
+        f"• <code>/reports</code> - Review user bug reports\n"
+        f"• <code>/maintenance</code> - Run storage & system health audit\n"
+        f"• <code>/diag</code> - Server & network diagnostics\n"
+        f"• <code>/upgrade_packages</code> - Auto-upgrade pip, yt-dlp\n"
+        f"• <code>/restart</code> - Safely restart bot process"
     )
     keyboard = [
         [
@@ -648,7 +663,7 @@ async def admin_menu_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
             InlineKeyboardButton("🔧 Maintenance Audit", callback_data="admin_action:maintenance")
         ],
         [
-            InlineKeyboardButton("🍪 Cookies Status", callback_data="admin_action:cookies"),
+            InlineKeyboardButton("🩺 Server Diagnostics", callback_data="admin_action:diagnostics"),
             InlineKeyboardButton("📦 Upgrade Packages", callback_data="admin_action:upgrade_pkg")
         ],
         [
@@ -656,11 +671,12 @@ async def admin_menu_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
         ]
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
+    msg = _get_target_message(update)
     if update.callback_query:
         await update.callback_query.answer()
-        await update.callback_query.message.reply_text(text, reply_markup=reply_markup, parse_mode="Markdown")
+        await msg.reply_text(text, reply_markup=reply_markup, parse_mode="HTML")
     else:
-        await update.message.reply_text(text, reply_markup=reply_markup, parse_mode="Markdown")
+        await msg.reply_text(text, reply_markup=reply_markup, parse_mode="HTML")
 
 
 @admin_only
@@ -778,9 +794,9 @@ async def admin_action_callback(update: Update, context: ContextTypes.DEFAULT_TY
     elif action == "maintenance":
         await query.answer()
         await maintenance_command(update, context)
-    elif action == "cookies":
+    elif action in ("diagnostics", "diag", "check"):
         await query.answer()
-        await cookies_command(update, context)
+        await diag_command(update, context)
     elif action == "upgrade_pkg":
         await query.answer()
         await upgrade_packages_command(update, context)

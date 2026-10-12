@@ -513,9 +513,9 @@ async def media_download_callback(update: Update, context: ContextTypes.DEFAULT_
 
         if "YOUTUBE_BOT_PROTECTION" in err_msg or "sign in to confirm you're not a bot" in err_msg.lower():
             await status_msg.edit_text(
-                "⚠️ <b>YouTube Security Verification Required</b>\n\n"
-                "YouTube has requested bot verification for this video.\n"
-                "💡 <i>Tip: The administrator can update fresh YouTube cookies via <code>/cookies</code> or configure a proxy.</i>",
+                "⚠️ <b>YouTube Video Restriction</b>\n\n"
+                "YouTube has enforced verification protection on this specific link.\n"
+                "⚡ <i>Our servers are constantly updating bypass methods. Please try another video or Shorts link in the meantime.</i>",
                 parse_mode="HTML"
             )
             return

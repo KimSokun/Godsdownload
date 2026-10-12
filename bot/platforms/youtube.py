@@ -66,7 +66,7 @@ class YouTubePlatform(BasePlatform):
     def _get_youtube_ydl_opts(self, is_audio: bool, download_path_template: str, proxy: Optional[str] = None) -> Dict[str, Any]:
         """
         Highly optimized yt-dlp options for YouTube and YouTube Shorts.
-        Uses android/ios/mweb/web player clients and skips redundant webpage/config loads.
+        Integrates local bgutil POT provider (127.0.0.1:4416) and multi-client extraction.
         """
         opts: Dict[str, Any] = {
             "noplaylist": True,
@@ -75,9 +75,11 @@ class YouTubePlatform(BasePlatform):
             "http_chunk_size": 10485760,  # 10MB chunk
             "socket_timeout": 15,
             "extractor_args": {
+                "youtubepot-bgutilhttp": {
+                    "base_url": ["http://127.0.0.1:4416"],
+                },
                 "youtube": {
-                    "player_client": ["android", "ios", "mweb", "web"],
-                    "player_skip": ["configs", "webpage"],
+                    "player_client": ["android_vr", "android", "ios", "mweb", "web"],
                 }
             },
         }
