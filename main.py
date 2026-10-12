@@ -133,6 +133,21 @@ async def global_error_handler(update: object, context: ContextTypes.DEFAULT_TYP
     logger.error(f"Telegram Exception caught: {context.error}")
 
 
+async def start_storage_cleaner(interval_minutes: int = 30, max_age_hours: float = 1.0) -> None:
+    """Periodically cleans orphaned temp files and expired media cache."""
+    from bot.maintenance import audit_storage_and_cleanup
+    while True:
+        try:
+            await asyncio.sleep(interval_minutes * 60)
+            res = audit_storage_and_cleanup(max_age_hours=max_age_hours)
+            if res.get("cleaned_files", 0) > 0:
+                logger.info(f"🧹 Storage auto-cleaner freed {res['cleaned_mb']} MB ({res['cleaned_files']} files).")
+        except asyncio.CancelledError:
+            break
+        except Exception as e:
+            logger.debug(f"Storage auto-cleaner error: {e}")
+
+
 async def main(lock=None):
     """Main application lifecycle."""
     if not config.bot_token:
@@ -141,6 +156,9 @@ async def main(lock=None):
 
     # 1. Start Background yt-dlp Auto-Updater
     asyncio.create_task(start_auto_updater(interval_hours=6))
+
+    # 1b. Start Background Storage Auto-Cleaner (runs every 30 minutes)
+    asyncio.create_task(start_storage_cleaner(interval_minutes=30, max_age_hours=1.0))
 
     # 2. Configure HTTP Request timeouts (300 seconds for large uploads)
     request = HTTPXRequest(

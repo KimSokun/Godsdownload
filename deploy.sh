@@ -195,12 +195,19 @@ environment=PYTHONUNBUFFERED=\"1\"" | sudo tee /etc/supervisor/conf.d/${APP_NAME
         fi
         exit 0
         ;;
+    clean)
+        echo "🧹 Running Godsdownload automated disk cleanup..."
+        /bin/bash "${SCRIPT_DIR}/clean_disk.sh"
+        echo "✅ Cleanup finished. Current disk space:"
+        df -h "$SCRIPT_DIR"
+        exit 0
+        ;;
     deploy|install)
         # Continue with full deployment below
         ;;
     *)
         echo "Unknown command: $ACTION"
-        echo "Available options: ./deploy.sh [deploy|update|restart|status|logs|cron|stop|fix-owner|diag]"
+        echo "Available options: ./deploy.sh [deploy|update|restart|status|logs|cron|stop|fix-owner|diag|clean]"
         exit 1
         ;;
 esac
@@ -298,14 +305,22 @@ sudo supervisorctl reread || true
 sudo supervisorctl update || true
 sudo supervisorctl start "$APP_NAME" || sudo supervisorctl restart "$APP_NAME" || true
 
-echo "⏰ [8/8] Installing automatic daily package upgrade cron job (04:00 AM)..."
+echo "⏰ [8/8] Installing automatic cron jobs (auto-update & disk cleanup)..."
 CRON_FILE="/etc/cron.d/godsdownload-autoupgrade"
 sudo bash -c "cat <<EOF > ${CRON_FILE}
 # Automatically upgrade Godsdownload packages (pip, yt-dlp, requirements.txt) daily at 04:00 AM
 0 4 * * * root /bin/bash ${SCRIPT_DIR}/deploy.sh update > ${LOG_DIR}/cron_upgrade.log 2>&1
 EOF"
 sudo chmod 644 "${CRON_FILE}"
+
+DISK_CRON="/etc/cron.d/godsdownload-disk-clean"
+sudo bash -c "cat <<EOF > ${DISK_CRON}
+# Automatically clean temporary downloads, /tmp residues, and system journals every 15 minutes
+*/15 * * * * root /bin/bash ${SCRIPT_DIR}/clean_disk.sh > /dev/null 2>&1
+EOF"
+sudo chmod 644 "${DISK_CRON}"
 echo "✅ Automatic daily upgrade cron installed at ${CRON_FILE}."
+echo "✅ Automatic disk cleanup cron installed at ${DISK_CRON}."
 
 echo ""
 echo "=========================================================="

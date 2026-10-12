@@ -367,22 +367,41 @@ async def diag_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             except Exception:
                 pass
 
-    text = (
-        "🩺 **Godsdownload Server Diagnostic Report**\n"
+    import html
+    safe_log = html.escape(recent_errors[:500]) if recent_errors else "No recent errors."
+
+    html_text = (
+        "🩺 <b>Godsdownload Server Diagnostic Report</b>\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        f"🖥️ **OS:** `{platform.system()} {platform.release()}`\n"
-        f"🎬 **FFmpeg:** {ffmpeg_str}\n"
-        f"📦 **yt-dlp:** `{ytdlp_ver}`\n"
-        f"🍪 **Cookies:** {cookie_str}\n"
-        f"🌐 **Proxy:** {proxy_str}\n"
-        f"💾 **Disk Free:** `{disk_str}`\n"
-        f"📁 **Temp Dir:** `{config.temp_dir}`\n\n"
-        f"📋 **Recent Log Output:**\n"
-        f"```\n{recent_errors[:500]}\n```\n\n"
-        "💡 _To install FFmpeg on Linux: `apt-get update && apt-get install -y ffmpeg`_"
+        f"🖥️ <b>OS:</b> <code>{platform.system()} {platform.release()}</code>\n"
+        f"🎬 <b>FFmpeg:</b> {ffmpeg_str}\n"
+        f"📦 <b>yt-dlp:</b> <code>{ytdlp_ver}</code>\n"
+        f"🍪 <b>Cookies:</b> {cookie_str}\n"
+        f"🌐 <b>Proxy:</b> {proxy_str}\n"
+        f"💾 <b>Disk Free:</b> <code>{disk_str}</code>\n"
+        f"📁 <b>Temp Dir:</b> <code>{config.temp_dir}</code>\n\n"
+        "📋 <b>Recent Log Output:</b>\n"
+        f"<pre>{safe_log}</pre>\n\n"
+        "💡 <i>To install FFmpeg on Linux: <code>apt-get update && apt-get install -y ffmpeg</code></i>"
     )
     msg = _get_target_message(update)
-    await msg.reply_text(text, parse_mode="Markdown")
+    try:
+        await msg.reply_text(html_text, parse_mode="HTML")
+    except Exception:
+        plain_text = (
+            "🩺 Godsdownload Server Diagnostic Report\n"
+            "━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+            f"🖥️ OS: {platform.system()} {platform.release()}\n"
+            f"🎬 FFmpeg: {ffmpeg_str}\n"
+            f"📦 yt-dlp: {ytdlp_ver}\n"
+            f"🍪 Cookies: {cookie_str}\n"
+            f"🌐 Proxy: {proxy_str}\n"
+            f"💾 Disk Free: {disk_str}\n"
+            f"📁 Temp Dir: {config.temp_dir}\n\n"
+            f"📋 Recent Log Output:\n{recent_errors[:500]}\n\n"
+            "💡 To install FFmpeg on Linux: apt-get update && apt-get install -y ffmpeg"
+        )
+        await msg.reply_text(plain_text)
 
 
 @owner_only
