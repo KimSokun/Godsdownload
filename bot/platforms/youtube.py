@@ -116,7 +116,7 @@ class YouTubePlatform(BasePlatform):
 
         # Step 1: Open-Source High-Speed Direct CDN Resolver (Zero Cookies, Bypasses Bot Protection)
         try:
-            cdn_info = await fetch_cobalt_mirror(clean_url, is_audio=False, timeout=6.0)
+            cdn_info = await fetch_cobalt_mirror(clean_url, is_audio=False, timeout=12.0)
             if cdn_info and cdn_info.get("video_url"):
                 cdn_url = cdn_info["video_url"]
                 output_video = f"{output_base}.mp4"
@@ -196,7 +196,7 @@ class YouTubePlatform(BasePlatform):
 
         # Step 1: Open-Source High-Speed Direct CDN Resolver (Zero Cookies, Bypasses Bot Protection)
         try:
-            cdn_info = await fetch_cobalt_mirror(clean_url, is_audio=True, timeout=6.0)
+            cdn_info = await fetch_cobalt_mirror(clean_url, is_audio=True, timeout=12.0)
             if cdn_info and cdn_info.get("audio_url"):
                 cdn_url = cdn_info["audio_url"]
                 output_audio = f"{output_base}.mp3"
