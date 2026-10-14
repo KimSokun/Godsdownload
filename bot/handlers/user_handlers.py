@@ -956,29 +956,48 @@ async def _send_report_to_owner(update: Update, context: ContextTypes.DEFAULT_TY
         )
 
     # Forward to owner / admins
+    import html
+    first_name_esc = html.escape(str(user.first_name or "User"))
+    user_label_esc = html.escape(str(user_label))
+    report_text_esc = html.escape(str(report_text))
+    admin_msg_html = (
+        f"🚨 <b>New Community Problem Report #{report_id}</b>\n\n"
+        f"👤 <b>User:</b> {first_name_esc} ({user_label_esc})\n"
+        f"🆔 <b>User ID:</b> <code>{user.id}</code>\n\n"
+        f"💬 <b>Problem Report:</b>\n<i>\"{report_text_esc}\"</i>"
+    )
+    admin_btn_row = [
+        InlineKeyboardButton("✅ Allow 30 Days VIP", callback_data=f"approve_vip:{user.id}:report")
+    ]
+    if user.username and user.username != "NoUsername":
+        uname = user.username.lstrip("@")
+        admin_btn_row.append(InlineKeyboardButton("💬 Contact User", url=f"https://t.me/{uname}"))
+    admin_markup = InlineKeyboardMarkup([admin_btn_row])
+
     for admin_id in config.get_admin_chat_ids():
         try:
-            admin_msg = (
-                f"🚨 **New Community Problem Report #{report_id}**\n\n"
-                f"👤 **User:** {user.first_name} ({user_label})\n"
-                f"🆔 **User ID:** `{user.id}`\n\n"
-                f"💬 **Problem Report:**\n{report_text}"
-            )
-            contact_url = f"https://t.me/{user.username}" if user.username else f"tg://user?id={user.id}"
-            admin_keyboard = [
-                [
-                    InlineKeyboardButton("✅ Allow 30 Days VIP", callback_data=f"approve_vip:{user.id}:report"),
-                    InlineKeyboardButton("💬 Contact User", url=contact_url)
-                ]
-            ]
             await context.bot.send_message(
                 chat_id=admin_id,
-                text=admin_msg,
-                reply_markup=InlineKeyboardMarkup(admin_keyboard),
-                parse_mode="Markdown"
+                text=admin_msg_html,
+                reply_markup=admin_markup,
+                parse_mode="HTML"
             )
         except Exception as e:
-            logger.error(f"Failed to forward report to admin {admin_id}: {e}")
+            logger.warning(f"Failed to forward report #{report_id} as HTML to admin {admin_id} ({e}), sending plain text...")
+            try:
+                plain_admin_msg = (
+                    f"🚨 New Community Problem Report #{report_id}\n\n"
+                    f"👤 User: {user.first_name} ({user_label})\n"
+                    f"🆔 User ID: {user.id}\n\n"
+                    f"💬 Problem Report:\n\"{report_text}\""
+                )
+                await context.bot.send_message(
+                    chat_id=admin_id,
+                    text=plain_admin_msg,
+                    reply_markup=admin_markup
+                )
+            except Exception as e2:
+                logger.error(f"Failed to forward report #{report_id} to admin {admin_id}: {e2}")
 
 
 async def my_id_command(update: Update, context: ContextTypes.DEFAULT_TYPE):

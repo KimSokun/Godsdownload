@@ -561,12 +561,13 @@ async def show_owner_reports_dashboard(update: Update, context: ContextTypes.DEF
         if not r.get("resolved"):
             uid = r.get("user_id")
             uname = raw_username.lstrip("@")
-            chat_url = f"https://t.me/{uname}" if uname and uname != "NoUsername" else f"tg://user?id={uid}"
-            keyboard.append([
+            btn_row = [
                 InlineKeyboardButton(f"✅ 30D VIP #{rid}", callback_data=f"approve_vip:{uid}:report"),
-                InlineKeyboardButton(f"✔️ Mark Fixed #{rid}", callback_data=f"mark_fixed:{rid}"),
-                InlineKeyboardButton(f"💬 Chat #{rid}", url=chat_url)
-            ])
+                InlineKeyboardButton(f"✔️ Mark Fixed #{rid}", callback_data=f"mark_fixed:{rid}")
+            ]
+            if uname and uname != "NoUsername":
+                btn_row.append(InlineKeyboardButton(f"💬 Chat #{rid}", url=f"https://t.me/{uname}"))
+            keyboard.append(btn_row)
 
     keyboard.append([
         InlineKeyboardButton("🔄 Refresh Dashboard", callback_data="refresh_reports"),
@@ -588,6 +589,7 @@ async def show_owner_reports_dashboard(update: Update, context: ContextTypes.DEF
             "━━━━━━━━━━━━━━━━━━━━━━━━━━",
             f"📊 Total: {total} | 🚨 Pending: {len(pending)} | ✅ Fixed: {len(fixed)}\n"
         ]
+        fallback_kb = []
         for r in recent:
             rid = r.get("id")
             status_icon = "✅ Fixed" if r.get("resolved") else "🚨 Pending"
@@ -597,11 +599,26 @@ async def show_owner_reports_dashboard(update: Update, context: ContextTypes.DEF
                 f"  📅 {r.get('created_at')}\n"
                 f"  💬 \"{r.get('text')}\"\n"
             )
+            if not r.get("resolved"):
+                uid = r.get("user_id")
+                fallback_kb.append([
+                    InlineKeyboardButton(f"✅ 30D VIP #{rid}", callback_data=f"approve_vip:{uid}:report"),
+                    InlineKeyboardButton(f"✔️ Mark Fixed #{rid}", callback_data=f"mark_fixed:{rid}")
+                ])
+        fallback_kb.append([InlineKeyboardButton("🔄 Refresh Dashboard", callback_data="refresh_reports")])
         plain_text = "\n".join(plain_lines)
-        if is_callback and update.callback_query:
-            await update.callback_query.edit_message_text(plain_text, reply_markup=reply_markup)
-        else:
-            await update.effective_message.reply_text(plain_text, reply_markup=reply_markup)
+        fallback_markup = InlineKeyboardMarkup(fallback_kb)
+        try:
+            if is_callback and update.callback_query:
+                await update.callback_query.edit_message_text(plain_text, reply_markup=fallback_markup)
+            else:
+                await update.effective_message.reply_text(plain_text, reply_markup=fallback_markup)
+        except Exception as e2:
+            logger.error(f"Fallback with keyboard also failed ({e2}), sending bare text without keyboard...")
+            if is_callback and update.callback_query:
+                await update.callback_query.edit_message_text(plain_text)
+            else:
+                await update.effective_message.reply_text(plain_text)
 
 
 async def mark_fixed_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):

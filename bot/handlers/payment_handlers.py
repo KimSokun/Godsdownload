@@ -98,7 +98,6 @@ async def upgrade_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # Auto-notify owner when user clicks buy / views upgrade
     user_label = f"@{user.username}" if user.username else "NoUsername"
-    contact_url = f"https://t.me/{user.username}" if user.username else f"tg://user?id={user.id}"
     admin_ids = config.get_admin_chat_ids()
     if not admin_ids:
         logger.warning("⚠️ No admin/owner chat IDs configured to receive buy click alert. Please set OWNER_ID or ADMIN_IDS in .env.")
@@ -112,11 +111,10 @@ async def upgrade_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 f"⚡ **Action:** User opened VIP buy page"
             )
             admin_kb = [
-                [
-                    InlineKeyboardButton("✅ Allow 30 Days VIP", callback_data=f"approve_vip:{user.id}:buy"),
-                    InlineKeyboardButton("💬 Contact User", url=contact_url)
-                ]
+                [InlineKeyboardButton("✅ Allow 30 Days VIP", callback_data=f"approve_vip:{user.id}:buy")]
             ]
+            if user.username and user.username != "NoUsername":
+                admin_kb.append([InlineKeyboardButton("💬 Contact User", url=f"https://t.me/{user.username.lstrip('@')}")])
             await context.bot.send_message(
                 chat_id=admin_id,
                 text=admin_msg,
@@ -180,7 +178,6 @@ async def receive_payment_proof(update: Update, context: ContextTypes.DEFAULT_TY
 
     # Notify admins
     user_label = f"@{user.username}" if user.username else "NoUsername"
-    contact_url = f"https://t.me/{user.username}" if user.username else f"tg://user?id={user.id}"
     for admin_id in config.get_admin_chat_ids():
         try:
             admin_msg = (
@@ -195,11 +192,10 @@ async def receive_payment_proof(update: Update, context: ContextTypes.DEFAULT_TY
                 [
                     InlineKeyboardButton("✅ Allow 30 Days VIP", callback_data=f"approve_vip:{user.id}:{proof_text[:8]}"),
                     InlineKeyboardButton("❌ Reject", callback_data=f"reject_vip:{user.id}:{proof_text[:8]}")
-                ],
-                [
-                    InlineKeyboardButton("💬 Contact User", url=contact_url)
                 ]
             ]
+            if user.username and user.username != "NoUsername":
+                admin_keyboard.append([InlineKeyboardButton("💬 Contact User", url=f"https://t.me/{user.username.lstrip('@')}")])
             await context.bot.send_message(
                 chat_id=admin_id,
                 text=admin_msg,
@@ -247,7 +243,6 @@ async def pay_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # Notify admins
     user_label = f"@{user.username}" if user.username else "NoUsername"
-    contact_url = f"https://t.me/{user.username}" if user.username else f"tg://user?id={user.id}"
     for admin_id in config.get_admin_chat_ids():
         try:
             admin_msg = (
@@ -261,11 +256,10 @@ async def pay_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 [
                     InlineKeyboardButton("✅ Allow 30 Days VIP", callback_data=f"approve_vip:{user.id}:{proof_text[:8]}"),
                     InlineKeyboardButton("❌ Reject", callback_data=f"reject_vip:{user.id}:{proof_text[:8]}")
-                ],
-                [
-                    InlineKeyboardButton("💬 Contact User", url=contact_url)
                 ]
             ]
+            if user.username and user.username != "NoUsername":
+                admin_keyboard.append([InlineKeyboardButton("💬 Contact User", url=f"https://t.me/{user.username.lstrip('@')}")])
             await context.bot.send_message(
                 chat_id=admin_id,
                 text=admin_msg,
@@ -300,10 +294,12 @@ async def admin_payment_callback(update: Update, context: ContextTypes.DEFAULT_T
         vip_info = tracker.get_vip_info(target_user_id)
         expiry_str = vip_info.get("vip_until_str") or "30 days"
         await query.answer("✅ VIP Approved (30 Days)!")
-        await query.edit_message_text(
-            f"{query.message.text}\n\n━━━━━━━━━━━━━━━\n✅ **APPROVED (Monthly Subscription) by Admin ({update.effective_user.first_name})**",
-            parse_mode="Markdown"
-        )
+        try:
+            await query.edit_message_text(
+                f"{query.message.text}\n\n━━━━━━━━━━━━━━━\n✅ APPROVED (Monthly Subscription) by Admin ({update.effective_user.first_name})"
+            )
+        except Exception as e:
+            logger.warning(f"Could not edit message text on approve_vip: {e}")
         # Notify user with Contact Support button (hiding owner's raw username)
         try:
             reply_markup = InlineKeyboardMarkup([
@@ -324,10 +320,12 @@ async def admin_payment_callback(update: Update, context: ContextTypes.DEFAULT_T
 
     elif action == "reject_vip":
         await query.answer("❌ VIP Rejected.")
-        await query.edit_message_text(
-            f"{query.message.text}\n\n━━━━━━━━━━━━━━━\n❌ **REJECTED by Admin ({update.effective_user.first_name})**",
-            parse_mode="Markdown"
-        )
+        try:
+            await query.edit_message_text(
+                f"{query.message.text}\n\n━━━━━━━━━━━━━━━\n❌ REJECTED by Admin ({update.effective_user.first_name})"
+            )
+        except Exception as e:
+            logger.warning(f"Could not edit message text on reject_vip: {e}")
         # Notify user
         try:
             await context.bot.send_message(
@@ -373,7 +371,6 @@ async def handle_paid_done_callback(update: Update, context: ContextTypes.DEFAUL
     )
 
     # Notify admins with interactive buttons: owner will allow 30 for user
-    contact_url = f"https://t.me/{user.username}" if user.username else f"tg://user?id={user.id}"
     admin_ids = config.get_admin_chat_ids()
     if not admin_ids:
         logger.warning("⚠️ No admin/owner chat IDs configured to receive 'I already paid' alert. Please set OWNER_ID or ADMIN_IDS in .env.")
@@ -391,11 +388,10 @@ async def handle_paid_done_callback(update: Update, context: ContextTypes.DEFAUL
                 [
                     InlineKeyboardButton("✅ Allow 30 Days VIP", callback_data=f"approve_vip:{user.id}:paid"),
                     InlineKeyboardButton("❌ Reject", callback_data=f"reject_vip:{user.id}:paid")
-                ],
-                [
-                    InlineKeyboardButton("💬 Contact User", url=contact_url)
                 ]
             ]
+            if user.username and user.username != "NoUsername":
+                admin_keyboard.append([InlineKeyboardButton("💬 Contact User", url=f"https://t.me/{user.username.lstrip('@')}")])
             await context.bot.send_message(
                 chat_id=admin_id,
                 text=admin_msg,
