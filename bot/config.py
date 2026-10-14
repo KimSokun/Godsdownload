@@ -55,6 +55,8 @@ class Config:
     cobalt_api_url: str = os.getenv("COBALT_API_URL", "https://api.cobalt.tools").strip()
     proxy_url: str = os.getenv("PROXY_URL", "").strip()
     youtube_proxy: str = os.getenv("YOUTUBE_PROXY", "").strip()
+    rapidapi_key: str = os.getenv("RAPIDAPI_KEY", "").strip()
+    instagram_cookie: str = os.getenv("INSTAGRAM_COOKIE", "").strip()
 
     # Built-in Web Video Player settings (For safe in-browser streaming & downloads)
     web_server_port: int = int(os.getenv("WEB_SERVER_PORT", "8080"))

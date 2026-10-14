@@ -6,7 +6,7 @@ import asyncio
 import logging
 import subprocess
 from abc import ABC, abstractmethod
-from typing import Optional, Dict, Any, List, Pattern
+from typing import Optional, Dict, Any, List, Pattern, Tuple
 import aiohttp
 import aiofiles
 import yt_dlp
@@ -260,6 +260,98 @@ async def ensure_ios_compatible_video(filepath: str) -> str:
     """Async wrapper for ensure_ios_compatible_video_sync."""
     loop = asyncio.get_running_loop()
     return await loop.run_in_executor(None, ensure_ios_compatible_video_sync, filepath)
+
+
+def probe_video_metadata_sync(filepath: str, generate_thumb: bool = True) -> Tuple[int, int, int, Optional[str]]:
+    """
+    Probes video file using ffmpeg to extract:
+    - width (int)
+    - height (int)
+    - duration (int, seconds)
+    - thumbnail_path (str, optional extracted JPEG frame with exact video aspect ratio)
+    Correctly accounts for rotation metadata (90/270 degrees) so Telegram displays the exact original frame.
+    """
+    if not filepath or not os.path.exists(filepath):
+        return 0, 0, 0, None
+
+    ffmpeg_exe = get_ffmpeg_path()
+    if not ffmpeg_exe:
+        return 0, 0, 0, None
+
+    try:
+        proc = subprocess.run(
+            [ffmpeg_exe, "-hide_banner", "-i", filepath],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            encoding="utf-8",
+            errors="ignore",
+            timeout=15,
+        )
+        stderr_text = proc.stderr or ""
+    except Exception as e:
+        logger.warning(f"Failed to probe video with ffmpeg: {e}")
+        return 0, 0, 0, None
+
+    width, height, duration = 0, 0, 0
+
+    # 1. Parse Duration
+    dur_match = re.search(r"Duration:\s*(\d+):(\d+):(\d+(?:\.\d+)?)", stderr_text)
+    if dur_match:
+        hours = int(dur_match.group(1))
+        minutes = int(dur_match.group(2))
+        seconds = float(dur_match.group(3))
+        duration = int(hours * 3600 + minutes * 60 + seconds)
+
+    # 2. Parse Width, Height, and Rotation
+    rotation = 0
+    rot_match = re.search(r"(?:displaymatrix:\s*rotation\s*of|rotate\s*:)\s*(-?\d+(?:\.\d+)?)", stderr_text, re.I)
+    if rot_match:
+        try:
+            rotation = int(float(rot_match.group(1)))
+        except Exception:
+            pass
+
+    for line in stderr_text.splitlines():
+        if "Stream #" in line and "Video:" in line:
+            dim_match = re.search(r"\b(\d{2,5})x(\d{2,5})\b", line)
+            if dim_match:
+                width = int(dim_match.group(1))
+                height = int(dim_match.group(2))
+                break
+
+    # If rotated 90 or 270 degrees, swap width and height for proper Telegram display
+    if abs(rotation) in (90, 270) and width > 0 and height > 0:
+        width, height = height, width
+
+    # 3. Generate native thumbnail frame directly from video with exact original aspect ratio
+    thumb_path = None
+    if generate_thumb and width > 0 and height > 0:
+        base, _ = os.path.splitext(filepath)
+        out_thumb = f"{base}_frame.jpg"
+        ss_time = "0.5" if duration <= 1 else "1.0"
+        try:
+            cmd = [
+                ffmpeg_exe, "-y",
+                "-ss", ss_time,
+                "-i", filepath,
+                "-vframes", "1",
+                "-q:v", "2",
+                out_thumb
+            ]
+            res = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=10)
+            if res.returncode == 0 and os.path.exists(out_thumb) and os.path.getsize(out_thumb) > 0:
+                thumb_path = out_thumb
+        except Exception as e:
+            logger.debug(f"Failed to generate video frame thumbnail: {e}")
+
+    return width, height, duration, thumb_path
+
+
+async def probe_video_metadata(filepath: str, generate_thumb: bool = True) -> Tuple[int, int, int, Optional[str]]:
+    """Async wrapper for probe_video_metadata_sync."""
+    loop = asyncio.get_running_loop()
+    return await loop.run_in_executor(None, probe_video_metadata_sync, filepath, generate_thumb)
 
 
 def cleanup_files(*filepaths: Optional[str]) -> None:
@@ -718,6 +810,12 @@ class BasePlatform(ABC):
                             thumbnail_file = sanitize_thumbnail(candidate_thumb)
                             break
 
+                    w, h, dur, vid_thumb = probe_video_metadata_sync(downloaded_video, generate_thumb=(thumbnail_file is None))
+                    width = w or None
+                    height = h or None
+                    duration = dur or duration
+                    thumbnail_file = thumbnail_file or vid_thumb
+
                     is_over_50mb = filesize > get_telegram_limit_bytes()
                     if is_over_50mb and not direct_url:
                         direct_url = extract_best_direct_url(info, is_audio=False)
@@ -745,6 +843,8 @@ class BasePlatform(ABC):
                         is_audio=False,
                         direct_url=direct_url,
                         headers=headers_payload,
+                        width=width,
+                        height=height,
                     )
             except Exception as e:
                 if direct_url:

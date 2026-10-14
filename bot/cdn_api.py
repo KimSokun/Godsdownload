@@ -543,3 +543,73 @@ async def download_direct_cdn_stream(
             break
 
     return False, 0, 0.0, last_error or "Download failed after retries"
+
+
+async def fetch_instagram_story_api(url: str, timeout: float = 10.0) -> Optional[Dict[str, Any]]:
+    """
+    Dedicated multi-tier API engine for Instagram Stories and Highlights.
+    Supports:
+    1. RapidAPI Instagram Story Downloader (if RAPIDAPI_KEY is configured in .env)
+    2. Cobalt API instances
+    """
+    clean_url = await expand_redirect_url(url)
+
+    # 1. Check RapidAPI if RAPIDAPI_KEY is configured
+    rapid_key = getattr(config, "rapidapi_key", None)
+    if rapid_key:
+        try:
+            endpoints = [
+                ("https://instagram-downloader-download-instagram-videos.p.rapidapi.com/instagram/", "instagram-downloader-download-instagram-videos.p.rapidapi.com"),
+                ("https://instagram-post-reels-stories-downloader.p.rapidapi.com/instagram/", "instagram-post-reels-stories-downloader.p.rapidapi.com"),
+            ]
+            async with aiohttp.ClientSession() as session:
+                for api_url, api_host in endpoints:
+                    headers = {
+                        "X-RapidAPI-Key": rapid_key,
+                        "X-RapidAPI-Host": api_host,
+                    }
+                    try:
+                        async with session.get(api_url, params={"url": clean_url}, headers=headers, timeout=aiohttp.ClientTimeout(total=timeout)) as resp:
+                            if resp.status == 200:
+                                data = await resp.json()
+                                media_url = None
+                                thumb_url = None
+                                is_img = False
+                                if isinstance(data, dict):
+                                    media_url = data.get("url") or data.get("download_url") or data.get("media")
+                                    thumb_url = data.get("thumb") or data.get("thumbnail")
+                                    if not media_url and "result" in data and isinstance(data["result"], list) and data["result"]:
+                                        media_url = data["result"][0].get("url")
+                                        thumb_url = data["result"][0].get("thumb")
+                                elif isinstance(data, list) and data:
+                                    media_url = data[0].get("url") or data[0].get("download_url")
+                                    thumb_url = data[0].get("thumbnail")
+
+                                if media_url:
+                                    clean_m = media_url.split("?")[0].lower()
+                                    if any(clean_m.endswith(ext) for ext in [".jpg", ".jpeg", ".png", ".webp"]):
+                                        is_img = True
+                                    return {
+                                        "success": True,
+                                        "source": "RapidAPI Story",
+                                        "title": "Instagram Story",
+                                        "uploader": "Instagram User",
+                                        "duration": 0,
+                                        "video_url": None if is_img else media_url,
+                                        "image_urls": [media_url] if is_img else [],
+                                        "thumbnail_url": thumb_url,
+                                    }
+                    except Exception as e:
+                        logger.debug(f"RapidAPI story endpoint {api_host} failed: {e}")
+        except Exception as e:
+            logger.debug(f"RapidAPI story error: {e}")
+
+    # 2. Try Cobalt mirror
+    try:
+        cobalt_info = await fetch_cobalt_mirror(clean_url, is_audio=False, timeout=timeout)
+        if cobalt_info and (cobalt_info.get("video_url") or cobalt_info.get("image_urls")):
+            return cobalt_info
+    except Exception as e:
+        logger.debug(f"Cobalt story fetch error: {e}")
+
+    return None

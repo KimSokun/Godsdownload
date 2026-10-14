@@ -13,6 +13,8 @@ from bot.platforms.base import (
     download_thumbnail,
     convert_to_mp3,
     cleanup_files,
+    ensure_ios_compatible_video_sync,
+    probe_video_metadata_sync,
     TELEGRAM_FILE_LIMIT_BYTES,
 )
 from bot.cdn_api import download_direct_cdn_stream, expand_redirect_url, fetch_cobalt_mirror
@@ -278,6 +280,19 @@ class FacebookPlatform(BasePlatform):
                 thumb_path = await download_thumbnail(thumb_url, output_thumb) if thumb_url else None
 
                 if ok:
+                    # 1. Remux for iOS and faststart
+                    output_video = ensure_ios_compatible_video_sync(output_video)
+                    total_bytes = os.path.getsize(output_video)
+                    filesize_mb = round(total_bytes / (1024 * 1024), 2)
+
+                    # 2. Extract exact original video frame width, height, duration & native thumbnail
+                    width, height, duration, vid_thumb = probe_video_metadata_sync(output_video, generate_thumb=True)
+
+                    thumb_url = media.get("thumbnail_url")
+                    thumb_path = vid_thumb
+                    if not thumb_path and thumb_url:
+                        thumb_path = await download_thumbnail(thumb_url, output_thumb)
+
                     return DownloadResult(
                         success=True,
                         filepath=output_video,
@@ -286,11 +301,13 @@ class FacebookPlatform(BasePlatform):
                         filesize_mb=filesize_mb,
                         title=media.get("title", "Facebook Video"),
                         uploader=media.get("uploader", "Facebook Creator"),
-                        duration=0,
+                        duration=duration or media.get("duration", 0),
                         thumbnail_path=thumb_path,
                         is_over_50mb=(total_bytes > TELEGRAM_FILE_LIMIT_BYTES),
                         is_audio=False,
                         direct_url=direct_vurl,
+                        width=width or None,
+                        height=height or None,
                     )
                 elif err and "FILE_TOO_LARGE" in err:
                     return DownloadResult(

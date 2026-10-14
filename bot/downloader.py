@@ -137,6 +137,8 @@ class DownloadResult:
     is_image: bool = False
     image_urls: List[str] = field(default_factory=list)
     image_paths: List[str] = field(default_factory=list)
+    width: Optional[int] = None
+    height: Optional[int] = None
 
 
 def extract_first_url(text: str) -> Optional[str]:
